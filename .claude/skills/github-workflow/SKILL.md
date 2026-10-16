@@ -25,7 +25,7 @@ Also never commit:
 Any real file the owner shares (for example a plate reader export) is format reference only. A committed copy must be a blank-plate export or hand-built with invented numbers.
 
 ## Session start
-1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone and **wait for a yes**. One session works on one issue. If no issue exists for the work, create it first (template below).
+1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone (the lowest-numbered milestone that still has open issues) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (template below).
 2. **Sync.** `git fetch origin`. If this branch's PR is already merged, restart it from `main`: `git checkout -B <branch> origin/main`. Use `--force-with-lease` on the next push only if the branch holds nothing but merged history. If `main` has moved on, merge it in.
 3. **Identity.** `git config user.email` must be a noreply address. If it isn't, stop and tell the owner.
 4. **Read.** The issue, including its latest session note, the PR checklist, the latest CI result, and any relevant `docs/decisions/` entries.
@@ -52,9 +52,9 @@ Any real file the owner shares (for example a plate reader export) is format ref
 - **Follow the config rule.** Every scientific constant lives in the config, never in code.
 
 ## Session end
-1. Make sure everything is committed and pushed, and `git status` is clean.
+1. Make sure everything is committed and pushed. `git status` should show nothing except untracked files that rule zero keeps out. Name those files to the owner: they exist only in this container, so the owner should keep their own copies.
 2. Report the latest test results exactly. If anything fails, quote the failure.
-3. Update the PR checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green.
+3. Update the PR checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green. Until the CI workflow exists, the tests passing locally stand in for CI, and you say so in the PR.
 4. Post a **session note** on the issue, every session, even when the work is finished:
    ```
    **Session note (YYYY-MM-DD)**
@@ -63,7 +63,7 @@ Any real file the owner shares (for example a plate reader export) is format ref
    Next step: …
    Waiting on owner: … (or "nothing")
    ```
-5. Write down any decision made during the session as `docs/decisions/NNNN-short-title.md`, with three parts: Context, Decision, Consequences.
+5. Make sure every decision made during the session is recorded in `docs/decisions/NNNN-short-title.md`, with three parts: Context, Decision, Consequences. Write each one when the decision is made, not at the end.
 6. Tell the owner in chat: the PR link, and what (if anything) they need to click.
 
 ## Merging, releases and tags: the owner's alone
