@@ -1,12 +1,11 @@
-# Owner setup (one time, Windows)
+# Owner setup (one time)
 
-Do these in order. The GitHub steps work the same in any browser. Every command is for PowerShell.
+Do these in order, on the GitHub website. You never need git on your laptop: all commits happen in Claude sessions.
 
 ## 1. Email privacy
 GitHub → your profile picture → **Settings** → **Emails**:
 - Tick **Keep my email addresses private**.
 - Tick **Block command line pushes that expose my email**.
-- Copy the `…@users.noreply.github.com` address shown on that page. You need it in step 7.
 
 ## 2. Pull request settings
 Repo → **Settings** → **General** → **Pull Requests**:
@@ -36,28 +35,29 @@ Repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** → **N
 - Leave the bypass list empty.
 - After the CI workflow exists (an M0 issue), edit the ruleset and also tick **Require status checks to pass**, then add the CI check.
 
-## 6. Private word list (names, school, email domains)
-Pick the words: your name, your teammate's name, the school's name, the school email domain. Write them as one comma-separated line. Store that same line in three places, and **never in the repo**:
-- **CI:** Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Name it `SYNTHASE_PRIVATE_WORDS`.
-- **Claude cloud sessions:** open the cloud environment menu in the session's title bar → **Edit** → add an environment variable named `SYNTHASE_PRIVATE_WORDS`. New sessions pick it up.
-- **Your laptop:** a text file **outside** the repo folder, at `$HOME\.synthase-private-words.txt`. The pre-commit hook (an M0 issue) will read it. Create it in PowerShell:
-  ```powershell
-  Set-Content -Path "$HOME\.synthase-private-words.txt" -Value "word one, word two"
-  ```
+## 6. Labels
+Repo → **Issues** → **Labels**:
+1. Delete every default label (`bug`, `documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`): **⋯** → **Delete**.
+2. Click **New label** for each of these 12. Any colours will do.
 
-## 7. Git on your laptop (only if you'll commit locally)
-```powershell
-winget install --id Git.Git -e
-git config --global user.name "smajeh-dot"
-git config --global user.email "PASTE-NOREPLY-ADDRESS-FROM-STEP-1"
-```
-- Branches you create yourself follow the pattern `laptop/<type>/<issue>-<short-description>`, for example `laptop/feat/12-yield`. The full convention is under "Branch names" in `SKILL.md`.
-- The same rules apply as for Claude: one issue per branch, a PR into `main`, squash merge.
+| Group | Labels |
+|---|---|
+| Type | `feature`, `bug`, `test`, `docs`, `infra` |
+| Area | `chemistry`, `microbiology`, `interface`, `data` |
+| Flag | `blocked`, `needs-verification`, `needs-decision` |
+
+## 7. Milestones
+Repo → **Issues** → **Milestones** → **New milestone**, five times. Leave **Due date** blank every time.
+1. `M0 Foundations`
+2. `M1 First commands`
+3. `M2 Terminal interface`
+4. `M3 Data pipeline`
+5. `M4 Results and record keeping`
 
 ## Your part in the routine
 | When | What you do |
 |---|---|
 | A PR is marked ready | Read the PR and its "Files changed" tab, check CI is green, then click **Squash and merge**. The branch deletes itself. |
-| End of a milestone | Merge the `chore(release)` PR. Then go to **Releases** → **Draft a new release** → new tag `v0.X.0` on `main` → **Generate release notes** → **Publish**. |
-| Before analysing real data for the write-up | Create a lab tag on `main`: `git tag lab-YYYY-MM-DD` then `git push origin lab-YYYY-MM-DD`. Or use a release marked as a pre-release. |
+| End of a milestone | Merge the `chore(release)` PR. Then go to **Releases** → **Draft a new release** → new tag `v0.X.0` on `main` → **Generate release notes** → **Publish release**. |
+| Before analysing real data for the write-up | Create a lab tag: **Releases** → **Draft a new release** → new tag `lab-YYYY-MM-DD` on `main` → tick **Set as a pre-release** → **Publish release**. |
 | A token or personal information leaked | Revoke the token first, then follow "If something leaked" in `SKILL.md`. |

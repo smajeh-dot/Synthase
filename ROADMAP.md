@@ -30,7 +30,7 @@ Built into everything, not separate lab commands.
 | Provenance | Raw files are fingerprinted (hashed) and made read-only when imported. Every output records the code version, input fingerprints and the settings used. | #54 + #55 |
 | Continuous integration (CI) | GitHub Actions on Windows: lint plus tests on every pull request and every merge into `main` | #74 |
 | Tests | Every calculation has at least one hand-worked example as a test, using invented numbers only | #75 |
-| Pre-commit hooks | Formatting, secret scanning (gitleaks), a large-file block and a private word-list check | #79 |
+| Pre-commit hooks | Formatting, secret scanning (gitleaks) and a large-file block. They run in Claude sessions, and CI repeats the same checks | #79 |
 
 ---
 
