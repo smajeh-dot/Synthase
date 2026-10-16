@@ -4,7 +4,7 @@ What Synthase will (and will not) do, in build order. Numbers in brackets, such 
 
 How this file works:
 - An item becomes a GitHub issue only when it is scheduled. Only Foundations and Tier 1 items are issues for now.
-- Milestones M0 to M4 on GitHub carry the target dates.
+- Milestones M0 to M4 on GitHub are ordered phases with no due dates. Work follows milestone order, whenever there's time.
 - Change this file through a normal pull request, like any other change.
 
 Ground rules every feature follows:
@@ -109,7 +109,7 @@ Behaviour:
 | `/stats` | Means, SD, and median or modal MIC across biological repeats, worked on log₂ values to respect the two-fold MIC scale | #14, #51 |
 | `/log` | Dated lab-notebook entries linked to files and compound IDs, with a mentor sign-off field | #16, #70 |
 | `/backup` | Zips the workspace to a chosen location (OneDrive folder or USB) | #78 |
-| `syn demo` | Runs the whole weekly loop on fake data | new |
+| `syn demo` | Runs the whole analysis loop on fake data | new |
 
 ---
 

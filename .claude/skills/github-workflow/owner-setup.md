@@ -51,7 +51,7 @@ winget install --id Git.Git -e
 git config --global user.name "smajeh-dot"
 git config --global user.email "PASTE-NOREPLY-ADDRESS-FROM-STEP-1"
 ```
-- Branches you create yourself follow the pattern `type/issue-short-name`, for example `feat/12-yield`.
+- Branches you create yourself follow the pattern `laptop/<type>/<issue>-<short-description>`, for example `laptop/feat/12-yield`. The full convention is under "Branch names" in `SKILL.md`.
 - The same rules apply as for Claude: one issue per branch, a PR into `main`, squash merge.
 
 ## Your part in the routine

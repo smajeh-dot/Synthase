@@ -26,10 +26,34 @@ Any real file the owner shares (for example a plate reader export) is format ref
 
 ## Session start
 1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone (the lowest-numbered milestone that still has open issues) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (template below).
-2. **Sync.** `git fetch origin`. If this branch's PR is already merged, restart it from `main`: `git checkout -B <branch> origin/main`. Use `--force-with-lease` on the next push only if the branch holds nothing but merged history. If `main` has moved on, merge it in.
+2. **Get onto the issue's branch** (see Branch names). Run `git fetch origin`, then:
+   - If the issue's branch is already on GitHub (an earlier session started it), check it out and merge `origin/main` into it.
+   - Otherwise create it from `origin/main`: `git checkout -b <name> origin/main`.
+   - After the first push to it, delete the random branch the session started on, but only if it holds nothing beyond `main` (`git rev-list --count origin/main..origin/<random-branch>` prints 0): `git push origin --delete <random-branch>`.
+   - If GitHub refuses the push to the readable name, stay on the random branch and tell the owner. The PR title still names the work.
 3. **Identity.** `git config user.email` must be a noreply address. If it isn't, stop and tell the owner.
 4. **Read.** The issue, including its latest session note, the PR checklist, the latest CI result, and any relevant `docs/decisions/` entries.
 5. **Baseline.** Run the tests before changing anything, so you know what was already broken.
+
+## Branch names
+Every branch name says who did the work, what kind of work it is, and which issue it is for:
+
+```
+<who>/<type>/<issue>-<short-description>
+```
+
+| Part | Values |
+|---|---|
+| who | `claude` = done in a Claude session; `laptop` = done by the owner on their laptop |
+| type | The same types as commit messages: `feat`, `fix`, `test`, `docs`, `refactor`, `chore` |
+| issue | The issue number |
+| short-description | 2 to 5 plain words, lowercase, joined by hyphens |
+
+Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`, `laptop/docs/9-windows-setup`.
+
+- **One branch per issue,** reused by every session that works on it.
+- **Always created from `main`.** GitHub deletes it automatically when the PR merges.
+- **Follow-up work** after a merge gets a new issue and a new branch.
 
 ## During the session
 - **Stage by name only:** `git add path/one path/two`. Never `git add .`, `-A`, `-a` or `commit -a`.
@@ -48,7 +72,7 @@ Any real file the owner shares (for example a plate reader export) is format ref
 - **What a commit contains:** one logical step, with its tests passing. Formatting-only or file-move changes go in their own commit.
 - **Push after every commit.** The cloud container is temporary.
 - **Open a draft PR after the first push.** Base `main`, Conventional title (it becomes the squash commit on `main`), body from the PR template below.
-- **Stay in scope.** For a new bug or idea, search the existing issues, then open a new one. Don't fix it on this branch. If you already changed out-of-scope code, revert it from this branch and paste the diff into the new issue so nothing is lost. **Never create a second branch.**
+- **Stay in scope.** For a new bug or idea, search the existing issues, then open a new one. Don't fix it on this branch. If you already changed out-of-scope code, revert it from this branch and paste the diff into the new issue so nothing is lost. **Never create a branch for side work.**
 - **Follow the config rule.** Every scientific constant lives in the config, never in code.
 
 ## Session end
@@ -86,6 +110,8 @@ Any real file the owner shares (for example a plate reader export) is format ref
   - Area: `chemistry`, `microbiology`, `interface`, `data`
   - Flags: `blocked`, `needs-verification`, `needs-decision`
 - **Milestones:** M0 Foundations, M1 First commands, M2 Terminal interface, M3 Data pipeline, M4 Results and record keeping.
+  - Milestones are ordered phases with **no due dates**, because sessions happen whenever the owner has time.
+  - Work order comes from milestone order. Never set or suggest deadlines.
 - **`ROADMAP.md` holds the full feature list.** An item becomes an issue only when it's scheduled.
 - **PR template** (once `.github/pull_request_template.md` exists, use that file instead). Body sections:
   - What and why
