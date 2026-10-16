@@ -31,7 +31,9 @@ Any real file the owner shares (for example a plate reader export) is format ref
 2. **Get onto the issue's branch** (see Branch names). Run `git fetch origin`, then:
    - If the issue's branch is already on GitHub (an earlier session started it), check it out and merge `origin/main` into it.
    - Otherwise create it from `origin/main`: `git checkout -b <name> origin/main`.
-   - After the first push to it, delete the random branch the session started on, but only if it holds nothing beyond `main` (`git rev-list --count origin/main..origin/<random-branch>` prints 0): `git push origin --delete <random-branch>`.
+   - Claude can't delete branches (GitHub refuses with a 403 error). So after the first push, check the random branch the session started on. If it holds nothing beyond `main` (`git rev-list --count origin/main..origin/<random-branch>` prints 0), add it to the owner's "Your turn" list:
+     - delete it at Repo → **Branches** → the bin icon next to it
+     - why: it's empty, and leaving it creates branch sprawl
    - If GitHub refuses the push to the readable name, stay on the random branch and tell the owner. The PR title still names the work.
 3. **Identity.** `git config user.email` must be a noreply address. If it isn't, stop and tell the owner.
 4. **Read.** The issue, including its latest session note, the PR checklist, the latest CI result, and any relevant `docs/decisions/` entries.
