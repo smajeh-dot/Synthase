@@ -18,9 +18,11 @@ Every change follows one path: **one issue → one branch → one draft PR → t
 | The config **template**, with placeholder values marked `UNVERIFIED` | The real config with verified values |
 
 Also never commit:
-- names, the school's name, email addresses or other personal information
+- real names, the school's name, email addresses or other personal information
 - tokens, keys or `.env` files
 - files over 1 MB
+
+GitHub usernames and the Claude attribution lines in commits and PRs are fine. They show who did what.
 
 Any real file the owner shares (for example a plate reader export) is format reference only. A committed copy must be a blank-plate export or hand-built with invented numbers.
 
@@ -29,27 +31,30 @@ Any real file the owner shares (for example a plate reader export) is format ref
 2. **Get onto the issue's branch** (see Branch names). Run `git fetch origin`, then:
    - If the issue's branch is already on GitHub (an earlier session started it), check it out and merge `origin/main` into it.
    - Otherwise create it from `origin/main`: `git checkout -b <name> origin/main`.
-   - After the first push to it, delete the random branch the session started on, but only if it holds nothing beyond `main` (`git rev-list --count origin/main..origin/<random-branch>` prints 0): `git push origin --delete <random-branch>`.
+   - Claude can't delete branches (GitHub refuses with a 403 error). So after the first push, check the random branch the session started on. If it holds nothing beyond `main` (`git rev-list --count origin/main..origin/<random-branch>` prints 0), add it to the owner's "Your turn" list:
+     - delete it at Repo → **Branches** → the bin icon next to it
+     - why: it's empty, and leaving it creates branch sprawl
    - If GitHub refuses the push to the readable name, stay on the random branch and tell the owner. The PR title still names the work.
 3. **Identity.** `git config user.email` must be a noreply address. If it isn't, stop and tell the owner.
 4. **Read.** The issue, including its latest session note, the PR checklist, the latest CI result, and any relevant `docs/decisions/` entries.
+   - Check on GitHub whether each "Waiting on owner" item from the last note has been done.
+   - Open the session by telling the owner which items are still outstanding (see Working with the owner).
 5. **Baseline.** Run the tests before changing anything, so you know what was already broken.
 
 ## Branch names
-Every branch name says who did the work, what kind of work it is, and which issue it is for:
+Every branch name says what kind of work it is and which issue it is for. All work happens in Claude sessions; the owner never commits locally.
 
 ```
-<who>/<type>/<issue>-<short-description>
+claude/<type>/<issue>-<short-description>
 ```
 
 | Part | Values |
 |---|---|
-| who | `claude` = done in a Claude session; `laptop` = done by the owner on their laptop |
 | type | The same types as commit messages: `feat`, `fix`, `test`, `docs`, `refactor`, `chore` |
 | issue | The issue number |
 | short-description | 2 to 5 plain words, lowercase, joined by hyphens |
 
-Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`, `laptop/docs/9-windows-setup`.
+Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`, `claude/docs/9-windows-setup`.
 
 - **One branch per issue,** reused by every session that works on it.
 - **Always created from `main`.** GitHub deletes it automatically when the PR merges.
@@ -57,14 +62,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 
 ## During the session
 - **Stage by name only:** `git add path/one path/two`. Never `git add .`, `-A`, `-a` or `commit -a`.
-- **Before every commit, review the staged changes:** `git diff --staged`, looking for rule-zero material, debug leftovers, hard-coded scientific constants and files outside the issue's scope. Then run the private-word check:
-  ```bash
-  words=$(printf '%s' "$SYNTHASE_PRIVATE_WORDS" | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d')
-  git diff --staged --name-only --diff-filter=ACMR | while read -r f; do git show ":$f" | grep -qiF -- "$words" && echo "PRIVATE WORD in: $f"; done
-  ```
-  - Any hit: unstage the file and fix it.
-  - If `SYNTHASE_PRIVATE_WORDS` is unset, tell the owner once that the check couldn't run.
-  - Never print the word list.
+- **Before every commit, review the staged changes:** `git diff --staged`, looking for rule-zero material (real names and the school's name included), debug leftovers, hard-coded scientific constants and files outside the issue's scope. Unstage and fix anything you find.
 - **Commit messages use Conventional Commits:** `type(scope): description`, in the imperative and under 72 characters.
   - Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`. The scope is the tool or area, e.g. `yield`, `plate`, `ci`.
   - Add a body explaining *why* when that isn't obvious.
@@ -88,7 +86,20 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
    Waiting on owner: … (or "nothing")
    ```
 5. Make sure every decision made during the session is recorded in `docs/decisions/NNNN-short-title.md`, with three parts: Context, Decision, Consequences. Write each one when the decision is made, not at the end.
-6. Tell the owner in chat: the PR link, and what (if anything) they need to click.
+6. Tell the owner in chat: the PR link, then a nudge for every item waiting on them (see Working with the owner).
+
+## Working with the owner
+The owner wants to be held accountable for their own steps. Never assume they know what to do, or that they have already done it. Every message that ends with something waiting on the owner closes with a **"Your turn"** list:
+
+```
+**Your turn**
+- [what to do]: [exact place: a link, or a click path such as Repo → Settings → General]. [Why it matters, in one plain sentence.]
+```
+
+- **Check, don't assume.** After the owner says they've done something, check it on GitHub where you can, and report what you found. For example, after a merge, check it was a squash merge and that the branch was deleted.
+- **Carry items forward.** Unfinished owner items stay in every session note's "Waiting on owner" line, and are repeated at the start of the next session until they're done.
+- **Raise a risky or rule-breaking choice once.** Say plainly what it costs, then respect the owner's decision and record it in `docs/decisions/` if it changes a rule.
+- **Keep the tone gentle:** a reminder, not a telling-off. One line per item. Explain any jargon. Steps are for the GitHub website or Windows PowerShell only.
 
 ## Merging, releases and tags: the owner's alone
 - **Never merge a PR, enable auto-merge, push to `main`, create a tag or create a release.**
@@ -97,7 +108,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 - Versions and tags:
   - **Milestone release:** M1 = `v0.1.0`, M2 = `v0.2.0`, and so on.
   - **Fix between milestones:** bump the last number, e.g. `v0.1.1`.
-  - **Lab tag:** `lab-YYYY-MM-DD` on `main`, before real data is analysed for the write-up.
+  - **Lab tag:** `lab-YYYY-MM-DD` on `main`, before real data is analysed for the write-up. The owner creates it on the GitHub website as a pre-release (see `owner-setup.md`).
 
 ## Tracking
 - **Issue template.** Title in Conventional style. Body with four headings:
@@ -105,7 +116,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
   - `## Done when`: a checklist, always including a hand-worked test example
   - `## Out of scope`
   - `## Notes`
-- **Labels: use only this fixed set; never invent new ones.** One type, one area, and any flags.
+- **Labels: use only this fixed set; never invent new ones.** Every issue gets one type and any flags. Add an area when the issue touches the app itself.
   - Type: `feature`, `bug`, `test`, `docs`, `infra`
   - Area: `chemistry`, `microbiology`, `interface`, `data`
   - Flags: `blocked`, `needs-verification`, `needs-decision`
@@ -127,7 +138,7 @@ A delete in a new commit is **not** a fix. History keeps the file, and on a publ
 2. **Secrets:** the owner revokes or rotates them first, before any cleanup.
 3. **History:** an unmerged branch is rewritten only with the owner's yes, then pushed with `--force-with-lease`. If the material reached `main`, stop and let the owner decide.
 4. **Remaining copies:** say plainly that old commits stay reachable by their ID until GitHub Support purges them, and that forks and clones may already hold copies.
-5. **Prevention:** add the cause to `.gitignore` or the hooks, in a normal PR.
+5. **Prevention:** add the cause to `.gitignore`, the hooks or CI, in a normal PR.
 
 ## Red flags: stop and re-read this skill
 | Thought | Reality |
@@ -140,5 +151,7 @@ A delete in a new commit is **not** a fix. History keeps the file, and on a publ
 | "The work is finished, so no session note" | The note goes on the issue every session. |
 | "This real file makes a better test fixture" | Fixtures are invented data only. |
 | "The value is well known, so I'll hard-code it" | It goes in the config, marked `UNVERIFIED` until the owner verifies it. |
+| "The owner said it's done, so it's done" | Check it on GitHub and say what you found. |
+| "They probably know they need to click merge" | End with the "Your turn" list anyway. |
 
-The owner's one-time GitHub and Windows setup is in `owner-setup.md` in this folder.
+The owner's one-time GitHub setup is in `owner-setup.md` in this folder.
