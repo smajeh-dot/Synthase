@@ -18,6 +18,13 @@ The owner chose all the triage defaults below for #32 (2026-10-17). The prompt a
 - **Wrong answers:** guided prompts explain and ask again. Flags fail with the message and exit code 1, and nothing is saved.
 - **Prompts and flags:** `syn compound add` with no flags asks for each field, and Enter skips any question except the label. With any flag it asks nothing, and `--label` is required. Running out of input (for example a closed pipe) cancels with "Nothing was added."
 - **Change log:** adding a compound logs one row for each field filled in, with the date and time, an empty old value and the new value. Edits in #34 use the same table.
+- **Details settled for #37** (the owner chose the triage defaults, 2026-10-17):
+  - A repeated label is caught straight after it is typed, before the other questions.
+  - A wrong answer in the prompts prints the message on its own line, then asks the same question again.
+  - Ctrl+C partway through is treated like running out of input: `Nothing was added.`, exit code 1.
+  - Flags without `--label` fail with: `Give the label with --label, or run "syn compound add" with no flags to be asked for each field.`
+  - `syn compound` on its own shows the `compound` help, as a bare `syn` does.
+  - Help text: `syn --help` lists `compound` as "keep track of the project's compounds, from idea to tested". `syn compound add --help` says: "Add a compound to the register. With no options, Synthase asks for each detail; press Enter to skip any but the label. With options, it asks nothing."
 - **Wording:** after adding, `syn compound add` prints `Added SYN-001: <label>`, each filled field, and `Add more details later with "syn compound edit SYN-001".` That command arrives in #34.
 
 ## Consequences

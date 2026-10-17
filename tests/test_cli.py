@@ -1,13 +1,16 @@
 import shutil
+import sqlite3
 import subprocess
 import sys
 import sysconfig
+from contextlib import closing
 from importlib.metadata import version
 
 import pytest
 
 import synthase
 from synthase.cli import main
+from synthase.compounds import REGISTER_NAME
 from synthase.workspace import code_folder
 
 
@@ -122,3 +125,212 @@ def test_init_help_mentions_default_and_onedrive(capsys):
     out = " ".join(capsys.readouterr().out.split())
     assert "Default: Documents\\Synthase-data." in out
     assert "syncs to OneDrive, the workspace is backed up automatically" in out
+
+
+# --- syn compound add, with invented compounds only ---
+
+ADDED_A = (
+    "Added SYN-001: Test compound A\n"
+    "  class        chalcone\n"
+    "  SMILES       CCO\n"
+    "  formula      C2H6O\n"
+    "  molar mass   46.1 g/mol\n"
+    "  status       planned\n"
+    'Add more details later with "syn compound edit SYN-001".\n'
+)
+CLASS_PROMPT = "Class (Schiff base, chalcone, starting material, other): "
+PROMPTS = ["Label: ", CLASS_PROMPT, "SMILES: ", "Status [planned]: ", "Notes: "]
+
+
+@pytest.fixture
+def workspace(tmp_path, capsys):
+    return make_workspace(tmp_path / "ws", capsys)
+
+
+def make_workspace(path, capsys):
+    assert main(["init", str(path)]) == 0
+    capsys.readouterr()
+    return path
+
+
+def answer(monkeypatch, *replies):
+    """Type ``replies`` at the prompts, then run out of input.
+
+    Returns the list the prompts are collected in.
+    """
+    prompts = []
+    waiting = iter(replies)
+
+    def typed(prompt):
+        prompts.append(prompt)
+        reply = next(waiting, EOFError)
+        if isinstance(reply, type) and issubclass(reply, BaseException):
+            raise reply
+        return reply
+
+    monkeypatch.setattr("builtins.input", typed)
+    return prompts
+
+
+def compound_rows(workspace):
+    with closing(sqlite3.connect(workspace / REGISTER_NAME)) as db:
+        return db.execute(
+            "SELECT id, label, class, smiles, formula, molar_mass, status, notes "
+            "FROM compounds"
+        ).fetchall()
+
+
+def test_compound_add_with_flags_prints_the_new_entry(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", "--class", "chalcone"]
+    assert main([*argv, "--smiles", "CCO"]) == 0
+    assert capsys.readouterr().out == ADDED_A
+
+
+def test_prompts_and_flags_give_the_same_entry(tmp_path, capsys, monkeypatch):
+    by_flags = make_workspace(tmp_path / "flags", capsys)
+    flags = ["--label", "Test compound A", "--class", "Chalcone", "--smiles", "CCO"]
+    assert main(["compound", "add", *flags, "--notes", "invented"]) == 0
+    flags_out = capsys.readouterr().out
+
+    by_prompts = make_workspace(tmp_path / "prompts", capsys)
+    prompts = answer(monkeypatch, "Test compound A", "Chalcone", "CCO", "", "invented")
+    assert main(["compound", "add"]) == 0
+    prompts_out = capsys.readouterr().out
+
+    assert prompts == PROMPTS
+    assert compound_rows(by_prompts) == compound_rows(by_flags)
+    assert prompts_out == (
+        "New compound. Press Enter to skip any question except the label.\n\n"
+        + flags_out
+    )
+    assert "  notes        invented\n" in flags_out
+
+
+def test_prompts_skip_every_blank_answer_but_the_label(workspace, capsys, monkeypatch):
+    answer(monkeypatch, "Test compound A", "", "", "", "")
+    assert main(["compound", "add"]) == 0
+    assert capsys.readouterr().out.endswith(
+        "Added SYN-001: Test compound A\n"
+        "  status       planned\n"
+        'Add more details later with "syn compound edit SYN-001".\n'
+    )
+    assert compound_rows(workspace) == [
+        (1, "Test compound A", None, None, None, None, "planned", None)
+    ]
+
+
+def test_prompts_ask_again_after_each_wrong_answer(workspace, capsys, monkeypatch):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    capsys.readouterr()
+    prompts = answer(
+        monkeypatch,
+        "",
+        "test COMPOUND a",
+        "Test compound B",
+        "ketone",
+        "chalcone",
+        "C1CC",
+        "CCO",
+        "finished",
+        "purified",
+        "",
+    )
+    assert main(["compound", "add"]) == 0
+    assert prompts == [
+        "Label: ",
+        "Label: ",
+        "Label: ",
+        CLASS_PROMPT,
+        CLASS_PROMPT,
+        "SMILES: ",
+        "SMILES: ",
+        "Status [planned]: ",
+        "Status [planned]: ",
+        "Notes: ",
+    ]
+    out = capsys.readouterr().out
+    for message in (
+        "A compound needs a label, such as a short name.",
+        '"Test compound A" is already SYN-001. Choose another label.',
+        '"ketone" isn\'t a compound class. Choose one of: '
+        "Schiff base, chalcone, starting material, other.",
+        'RDKit can\'t read the SMILES "C1CC".',
+        '"finished" isn\'t a status.',
+    ):
+        assert message in out
+    assert "Added SYN-002: Test compound B" in out
+    assert compound_rows(workspace)[1][1:] == (
+        "Test compound B",
+        "chalcone",
+        "CCO",
+        "C2H6O",
+        pytest.approx(46.069, abs=0.001),
+        "purified",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--smiles", "C1CC"], 'RDKit can\'t read the SMILES "C1CC".'),
+        (["--class", "ketone"], '"ketone" isn\'t a compound class.'),
+        (["--status", "finished"], '"finished" isn\'t a status.'),
+        (["--label", "test compound A"], "is already SYN-001."),
+    ],
+)
+def test_flags_with_a_wrong_answer_fail_and_save_nothing(
+    workspace, capsys, flags, message
+):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    capsys.readouterr()
+    argv = ["compound", "add", "--label", "Test compound B", *flags]
+    assert main(argv) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert message in captured.err
+    assert [row[1] for row in compound_rows(workspace)] == ["Test compound A"]
+
+
+def test_flags_need_a_label(workspace, capsys):
+    assert main(["compound", "add", "--smiles", "CCO"]) == 1
+    assert capsys.readouterr().err == (
+        'Give the label with --label, or run "syn compound add" with no flags '
+        "to be asked for each field.\n"
+    )
+    assert not (workspace / REGISTER_NAME).exists()
+
+
+@pytest.mark.parametrize("stop", [EOFError, KeyboardInterrupt])
+def test_stopping_partway_adds_nothing(workspace, capsys, monkeypatch, stop):
+    answer(monkeypatch, "Test compound A", "chalcone", stop)
+    assert main(["compound", "add"]) == 1
+    assert capsys.readouterr().err == "Nothing was added.\n"
+    assert not (workspace / REGISTER_NAME).exists()
+
+
+def test_compound_add_without_a_workspace_says_to_run_init(capsys):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 1
+    assert 'Run "syn init"' in capsys.readouterr().err
+
+
+def test_compound_on_its_own_shows_its_help(capsys):
+    assert main(["compound"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("usage: syn compound")
+    assert "add a compound to the register" in out
+
+
+def test_compound_help_text(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "compound keep track of the project's compounds, from idea to tested" in out
+    with pytest.raises(SystemExit):
+        main(["compound", "add", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert (
+        "Add a compound to the register. With no options, Synthase asks for each "
+        "detail; press Enter to skip any but the label. With options, it asks "
+        "nothing."
+    ) in out
