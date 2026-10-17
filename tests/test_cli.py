@@ -1,8 +1,8 @@
 import shutil
 import subprocess
 import sys
+import sysconfig
 from importlib.metadata import version
-from pathlib import Path
 
 import pytest
 
@@ -44,9 +44,10 @@ def test_running_as_module_prints_version():
 
 
 def test_installed_syn_command_prints_version():
-    # The `syn` launcher sits next to the Python that runs the tests
-    # (`.venv\Scripts` on Windows, `.venv/bin` elsewhere).
-    syn = shutil.which("syn", path=str(Path(sys.executable).parent))
+    # pip puts the `syn` launcher in the scripts folder of the Python that runs
+    # the tests: `.venv\Scripts` in a venv, but `<python>\Scripts` (not the
+    # folder holding python.exe) for a plain Windows install, as on CI.
+    syn = shutil.which("syn", path=sysconfig.get_path("scripts"))
     assert syn is not None, "syn is not installed: run pip install -e .[dev]"
     result = subprocess.run(
         [syn, "--version"], capture_output=True, text=True, check=True
