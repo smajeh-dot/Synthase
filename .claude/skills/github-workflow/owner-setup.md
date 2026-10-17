@@ -47,12 +47,13 @@ Repo → **Issues** → **Labels**:
 | Flag | `blocked`, `needs-verification`, `needs-decision` |
 
 ## 7. Milestones
-Repo → **Issues** → **Milestones** → **New milestone**, five times. Leave **Due date** blank every time.
+Repo → **Issues** → **Milestones** → **New milestone**, six times. Leave **Due date** blank every time.
 1. `M0 Foundations`
-2. `M1 First commands`
+2. `M1 Compound register`
 3. `M2 Terminal interface`
-4. `M3 Data pipeline`
-5. `M4 Results and record keeping`
+4. `M3 Lab calculators and plate design`
+5. `M4 Data pipeline`
+6. `M5 Results and record keeping`
 
 ## Your part in the routine
 | When | What you do |

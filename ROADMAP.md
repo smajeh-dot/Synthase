@@ -4,7 +4,7 @@ What Synthase will (and will not) do, in build order. Numbers in brackets, such 
 
 How this file works:
 - An item becomes a GitHub issue only when it is scheduled. Only Foundations and Tier 1 items are issues for now.
-- Milestones M0 to M4 on GitHub are ordered phases with no due dates. Work follows milestone order, whenever there's time.
+- Milestones M0 to M5 on GitHub are ordered phases with no due dates. Work follows milestone order, whenever there's time.
 - Change this file through a normal pull request, like any other change.
 
 Ground rules every feature follows:
@@ -27,7 +27,6 @@ Built into everything, not separate lab commands.
 | `syn doctor` | Self-test: checks the install and the config, and lists every config value still marked unverified | #72 + new |
 | `syn init` workspace | Creates the local workspace outside the repo (`raw/`, `maps/`, `results/`, `notebook/`, `config`). Synthase never writes into its own code folder. | new |
 | Config system | A committed template holds placeholder values marked `UNVERIFIED`. The real config lives in the workspace, and every value records its source and verification status. | new |
-| Provenance | Raw files are fingerprinted (hashed) and made read-only when imported. Every output records the code version, input fingerprints and the settings used. | #54 + #55 |
 | Continuous integration (CI) | GitHub Actions on Windows: lint plus tests on every pull request and every merge into `main` | #74 |
 | Tests | Every calculation has at least one hand-worked example as a test, using invented numbers only | #75 |
 | Pre-commit hooks | Formatting, secret scanning (gitleaks) and a large-file block. They run in Claude sessions, and CI repeats the same checks | #79 |
@@ -36,11 +35,13 @@ Built into everything, not separate lab commands.
 
 ## Tier 1: the core loop (very likely)
 
-### M1: first commands (no lab data needed)
+The order brings the terminal interface forward, because real lab data won't arrive for a while ([decision 0012](docs/decisions/0012-roadmap-order.md)). Every command is built on one shared command layer: its work is done once, and both the plain command line (`syn compound add`) and the app (`/compound add`) call it.
 
-Build in this order. `/yield` and `/plate design` both read from the compound register, so the register comes first.
+### M1: compound register (no lab data needed)
 
-#### 1. `/compound`: compound register (#3, #18, #19)
+The first real command, on the plain command line. `/yield` and `/plate design` both read from the register, so it comes first.
+
+#### `/compound`: compound register (#3, #18, #19)
 Add a compound the moment it is only an idea, and fill in its details as the project produces them. Every field except a short label is optional.
 
 | Command | What it does |
@@ -63,37 +64,47 @@ Fields:
 Behaviour:
 - Every edit is logged with its date and the old and new values.
 - Data is stored in SQLite inside the local workspace, never in the repo.
-- Works as guided prompts in the terminal interface, or as flags on the plain command line (for example `syn compound edit SYN-001 --mp "142-144"`).
+- Works as guided prompts, or as flags on the plain command line (for example `syn compound edit SYN-001 --mp "142-144"`). It joins the terminal interface in M2.
 - Tests use invented compounds only.
 
-#### 2. `/calc`: lab calculator (#1, #43, #45)
+### M2: terminal interface
+- Full-screen Textual app: scrolling output area, a fixed command bar, a status line, slash commands with tab completion, history, inline tables, and confirmation before overwriting files. Plots arrive in M4.
+- `/help [topic]` with fixed help text, and `/config` to show or edit settings.
+- `/compound`, `doctor` and `init` run inside the app, through the shared command layer.
+- Anything that is not a command gives "unknown command, try /help".
+- Works best in Windows Terminal, which Windows 11 uses by default.
+
+### M3: lab calculators and plate design
+
+Each command works both in the app and on the plain command line from the start.
+
+#### `/calc`: lab calculator (#1, #43, #45)
 - Converts between mass, amount, concentration and molarity.
 - Stock solutions and serial dilutions.
 - DMSO limit check, using the limit from the config.
 - Inoculum preparation from OD600 and a calibration curve.
 - Transformation efficiency (CFU per µg DNA).
 
-#### 3. `/yield`: stoichiometry and yield sheet (#2)
+#### `/yield`: stoichiometry and yield sheet (#2)
 - Takes the SMILES of each reagent and gives molar masses, equivalents, masses to weigh, and theoretical and % yield.
 - Saves each run as a batch in the compound register.
 
-#### 4. `/plate design` and `/checkerboard design` (#6, #7, #71)
+#### `/plate design` and `/checkerboard design` (#6, #7, #71)
 - One shared engine produces 96-well layouts with serial dilutions and all the controls.
 - Outputs a plate map file and a printable pipetting sheet.
 - Checks the DMSO limit.
 - Prints a pre-run checklist (controls, risk assessment, sign-off) before the sheet.
 
-#### 5. Library enumerator (#32)
+#### Library enumerator (#32)
 - Lists every Schiff base or chalcone that can be made from lists of aldehydes and amines (or ketones).
 - Chosen compounds can be added straight to the register as "planned".
-- Placed late in M1 because the compounds are not yet chosen.
+- Placed late in M3 because the compounds are not yet chosen.
 
-### M2: terminal interface
-- Full-screen Textual app: scrolling output area, a fixed command bar, a status line, slash commands with tab completion, history, inline tables and plots, and confirmation before overwriting files.
-- `/help [topic]` with fixed help text, and `/config` to show or edit settings.
-- Anything that is not a command gives "unknown command, try /help".
+#### `/log`: lab notebook (#16, #70)
+- Dated lab-notebook entries linked to files and compound IDs, with a mentor sign-off field.
+- Placed here because notes start with synthesis, long before plate readings.
 
-### M3: data pipeline
+### M4: data pipeline
 | Command | What it does | From |
 |---|---|---|
 | Fake data generator | Produces fake plate reads, so the pipeline can be tested without the lab | #76 |
@@ -102,12 +113,13 @@ Behaviour:
 | `/mic` | Applies the growth threshold from the config, calls the MIC, and flags rows that don't change in one direction and skipped wells | #10 |
 | `/fici` | MICs alone and in combination, FIC(A), FIC(B), FICI, the interpretation band from the config, and an isobologram | #11 |
 | Figure style | One colour-blind-safe style used by every plot, with poster and slide size exports | #15, #63 |
+| Provenance | Raw files are fingerprinted (hashed) and made read-only when imported. Every output records the code version, input fingerprints and the settings used. Moved from M0, because raw files arrive here. | #54 + #55 |
+| Inline plots | Plots shown inside the terminal interface, in the figure style. Moved from M2, because nothing draws plots until here. | new |
 
-### M4: results and record keeping
+### M5: results and record keeping
 | Command | What it does | From |
 |---|---|---|
 | `/stats` | Means, SD, and median or modal MIC across biological repeats, worked on log₂ values to respect the two-fold MIC scale | #14, #51 |
-| `/log` | Dated lab-notebook entries linked to files and compound IDs, with a mentor sign-off field | #16, #70 |
 | `/backup` | Zips the workspace to a chosen location (OneDrive folder or USB) | #78 |
 | `syn demo` | Runs the whole analysis loop on fake data | new |
 
