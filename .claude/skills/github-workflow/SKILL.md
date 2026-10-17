@@ -116,6 +116,7 @@ The owner wants to be held accountable for their own steps. Never assume they kn
   - The website applies them for the owner. Issues and PRs Claude creates through the API don't get them, so read the file and copy its headings in order. Leave out the header block between the `---` lines and the `<!-- -->` hints, but follow what the hints say.
   - Titles are always in Conventional style.
   - A PR copies the issue's "Done when" checklist and ticks it there.
+  - GitHub reads templates only from `main`, so a template change can only be tested on the website after it merges. Such a PR says `Part of #N` instead of `Closes #N`, so the issue stays open until the owner's website test passes. Claude then checks the test issue on GitHub and closes the issue as completed.
 - **Labels: use only this fixed set; never invent new ones.** Every issue gets one type and any flags. Add an area when the issue touches the app itself.
   - Type: `feature`, `bug`, `test`, `docs`, `infra`
   - Area: `chemistry`, `microbiology`, `interface`, `data`

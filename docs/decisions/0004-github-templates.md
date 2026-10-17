@@ -11,6 +11,7 @@ GitHub applies templates only on its website. Issues and PRs created through the
 - **PRs carry a "Done when" section.** The PR copies the issue's checklist and the boxes are ticked there, so the owner checks one page before merging and the PR list shows progress. Issue #7 listed five PR sections; this is the sixth.
 - **Both templates start with a hidden reminder** that the repo is public, so no lab data, results, real names, the school's name or keys go into an issue or PR.
 - **No automated test checks the templates.** The owner judged it unnecessary for a personal tool.
+- **Template changes are tested after merging.** GitHub reads templates only from `main`, so the website test can't happen on the PR's branch. A template PR says `Part of #N` rather than `Closes #N`, so the issue stays open until the owner's test passes, and only then is it closed as completed.
 
 ## Consequences
 - Changing a format means editing the template file in a normal PR. The skill needs no change.
