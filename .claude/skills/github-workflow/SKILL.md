@@ -39,7 +39,7 @@ Any real file the owner shares (for example a plate reader export) is format ref
 4. **Read.** The issue, including its latest session note, the PR checklist, the latest CI result, and any relevant `docs/decisions/` entries.
    - Check on GitHub whether each "Waiting on owner" item from the last note has been done.
    - Open the session by telling the owner which items are still outstanding (see Working with the owner).
-5. **Baseline.** Run the tests before changing anything, so you know what was already broken.
+5. **Baseline.** Run the tests before changing anything, so you know what was already broken. If the container has no `.venv` yet, create one, install with `pip install -e ".[dev]"`, then run `.venv/bin/pre-commit install` so every `git commit` also runs the hooks.
 
 ## Branch names
 Every branch name says what kind of work it is and which issue it is for. All work happens in Claude sessions; the owner never commits locally.
@@ -62,6 +62,9 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 
 ## During the session
 - **Stage by name only:** `git add path/one path/two`. Never `git add .`, `-A`, `-a` or `commit -a`.
+- **Before every commit, run the hooks on the staged files:** `.venv/bin/pre-commit run`. They check ruff, secrets (gitleaks), files over 1 MB, trailing whitespace and end-of-file newlines.
+  - If a hook fixes a file, review the fix and stage it again by name. If a hook blocks a file, fix the cause; never skip it with `--no-verify`.
+  - The first run in a new container takes about a minute while the hooks install.
 - **Before every commit, review the staged changes:** `git diff --staged`, looking for rule-zero material (real names and the school's name included), debug leftovers, hard-coded scientific constants and files outside the issue's scope. Unstage and fix anything you find.
 - **Commit messages use Conventional Commits:** `type(scope): description`, in the imperative and under 72 characters.
   - Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`. The scope is the tool or area, e.g. `yield`, `plate`, `ci`.
