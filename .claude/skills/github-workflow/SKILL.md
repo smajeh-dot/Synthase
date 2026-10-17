@@ -124,7 +124,7 @@ The owner wants to be held accountable for their own steps. Never assume they kn
   - Type: `feature`, `bug`, `test`, `docs`, `infra`
   - Area: `chemistry`, `microbiology`, `interface`, `data`
   - Flags: `blocked`, `needs-verification`, `needs-decision`
-- **Milestones:** M0 Foundations, M1 First commands, M2 Terminal interface, M3 Data pipeline, M4 Results and record keeping.
+- **Milestones:** M0 Foundations, M1 Compound register, M2 Terminal interface, M3 Lab calculators and plate design, M4 Data pipeline, M5 Results and record keeping.
   - Milestones are ordered phases with **no due dates**, because sessions happen whenever the owner has time.
   - Work order comes from milestone order. Never set or suggest deadlines.
 - **`ROADMAP.md` holds the full feature list.** An item becomes an issue only when it's scheduled.
