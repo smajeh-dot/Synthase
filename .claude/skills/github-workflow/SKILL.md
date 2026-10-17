@@ -76,7 +76,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 ## Session end
 1. Make sure everything is committed and pushed. `git status` should show nothing except untracked files that rule zero keeps out. Name those files to the owner: they exist only in this container, so the owner should keep their own copies.
 2. Report the latest test results exactly. If anything fails, quote the failure.
-3. Tick the boxes met in the PR's "Done when" checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green. Until the CI workflow exists, the tests passing locally stand in for CI, and you say so in the PR.
+3. Tick the boxes met in the PR's "Done when" checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green. Check CI with `gh api repos/smajeh-dot/Synthase/commits/<sha>/check-runs`.
 4. Post a **session note** on the issue, every session, even when the work is finished:
    ```
    **Session note (YYYY-MM-DD)**
