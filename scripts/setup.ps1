@@ -14,8 +14,14 @@ $venvPython = Join-Path $venv 'Scripts\python.exe'
 $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
 $shim = Join-Path $bin 'syn.cmd'
 
-# Prints the version, then the full path, of the Python that runs it.
-$probe = "import sys; print('%d.%d' % sys.version_info[:2]); print(sys.executable)"
+# Prints the version, the platform (such as win-amd64) and the full path of the
+# Python that runs it.
+$probe = "import sys, sysconfig; print('%d.%d' % sys.version_info[:2]); print(sysconfig.get_platform()); print(sys.executable)"
+
+# RDKit only publishes Windows installs for 64-bit Intel/AMD Python, so an ARM
+# laptop needs that Python too. Windows 11 runs it through emulation.
+$wantPlatform = 'win-amd64'
+$installFix = 'install Python 3.13 from https://www.python.org/downloads/windows/ using "Windows installer (64-bit)", not ARM64, even on an ARM laptop'
 
 function Write-Step([string]$text) {
     Write-Host "==> $text ... " -NoNewline
@@ -32,39 +38,58 @@ function Stop-Setup([string]$problem, [string]$fix) {
     exit 1
 }
 
-# Runs $probe with a Python command such as `py -3.13`. Returns the version and
-# path, or nothing if that command isn't there or isn't Python.
+# Runs $probe with a Python command such as `python`. Returns the version,
+# platform and path, or nothing if that command isn't there or isn't Python.
 function Get-PythonInfo([string[]]$command) {
     if (-not (Get-Command $command[0] -ErrorAction SilentlyContinue)) { return }
     $arguments = @($command | Select-Object -Skip 1) + @('-c', $probe)
     $out = @(& $command[0] @arguments 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $out.Count -ge 2) {
-        return @{ Version = $out[0].Trim(); Path = $out[1].Trim() }
+    if ($LASTEXITCODE -eq 0 -and $out.Count -ge 3) {
+        return @{ Version = $out[0].Trim(); Platform = $out[1].Trim(); Path = $out[2].Trim() }
+    }
+}
+
+function Test-RightPython($info) {
+    return $info -and $info.Version -eq '3.13' -and $info.Platform -eq $wantPlatform
+}
+
+# Every installed Python the py launcher knows, then `python` on the PATH. An
+# ARM laptop can have an ARM and an x64 Python 3.13 side by side, so each is
+# checked rather than trusting `py -3.13` to pick the right one.
+function Find-Python {
+    $candidates = @()
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($line in @(& py -0p 2>$null)) {
+            if ($line -match '([A-Za-z]:\\.*\.exe)') { $candidates += , @($Matches[1]) }
+        }
+    }
+    $candidates += , @('python')
+    foreach ($candidate in $candidates) {
+        $info = Get-PythonInfo $candidate
+        if (Test-RightPython $info) { return $info }
     }
 }
 
 Write-Host 'Synthase setup'
 
-# 1. Python 3.13 (decision 0002)
+# 1. Python 3.13 (decision 0002), 64-bit Intel/AMD (decision 0011)
 Write-Step 'Checking Python 3.13'
 $venvExists = Test-Path $venvPython
 if ($venvExists) {
     $python = Get-PythonInfo @($venvPython)
-    if (-not $python -or $python.Version -ne '3.13') {
-        Stop-Setup "The .venv folder doesn't use Python 3.13." `
-            "delete the .venv folder in $repo, then run this script again."
+    if (-not (Test-RightPython $python)) {
+        if ($python) { $found = "Python $($python.Version) for $($python.Platform)" } else { $found = 'a Python that does not run' }
+        Stop-Setup "The .venv folder uses $found. Synthase needs Python 3.13 for $wantPlatform (64-bit Intel/AMD), the only Windows version RDKit, the chemistry library, installs on." `
+            "$installFix, if you don't have it yet. Then delete the .venv folder in $repo and run this script again."
     }
 } else {
-    $python = Get-PythonInfo @('py', '-3.13')
-    if (-not $python -or $python.Version -ne '3.13') {
-        $python = Get-PythonInfo @('python')
-    }
-    if (-not $python -or $python.Version -ne '3.13') {
-        Stop-Setup 'Python 3.13 was not found.' `
-            'install Python 3.13 from https://www.python.org/downloads/windows/, then run this script again.'
+    $python = Find-Python
+    if (-not $python) {
+        Stop-Setup "Python 3.13 for $wantPlatform (64-bit Intel/AMD) was not found. It is the only Windows version RDKit, the chemistry library, installs on." `
+            "$installFix, then run this script again."
     }
 }
-Write-Ok "Python $($python.Version)"
+Write-Ok "Python $($python.Version), $($python.Platform)"
 
 # 2. The virtual environment
 Write-Step 'Virtual environment .venv'

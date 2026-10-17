@@ -6,12 +6,12 @@ See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
 
 ## Quick start (Windows PowerShell)
 
-1. **Install Python 3.13** from [python.org](https://www.python.org/downloads/windows/). Synthase needs exactly 3.13 ([why](docs/decisions/0002-python-version.md)). Then check that it's there:
+1. **Install Python 3.13** from [python.org](https://www.python.org/downloads/windows/). Synthase needs exactly 3.13 ([why](docs/decisions/0002-python-version.md)). Choose **Windows installer (64-bit)**, even on an ARM laptop: RDKit, the chemistry library, has no ARM version for Windows, and Windows 11 runs the 64-bit Intel/AMD version through emulation ([why](docs/decisions/0011-setup-script.md)). Then check that it's there:
    ```powershell
    py -3.13 --version
    ```
 2. **Get the code.** On GitHub, click **Code** → **Download ZIP**, unzip it, and open PowerShell in the unzipped folder (the one with `pyproject.toml` in it).
-3. **Create a virtual environment** (a private Python folder just for Synthase) and switch it on:
+3. **Create a virtual environment** (a private Python folder just for Synthase) and switch it on. On an ARM laptop that also has the ARM Python, skip steps 3 to 5 and run the setup script (step 7) instead: it picks the right Python.
    ```powershell
    py -3.13 -m venv .venv
    .\.venv\Scripts\Activate.ps1
