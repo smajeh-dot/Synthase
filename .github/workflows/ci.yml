@@ -52,6 +52,32 @@ jobs:
       - name: pytest
         run: python -m pytest
 
+      # Runs the setup script as the owner does, twice to check it's safe to
+      # re-run. syn doctor needs a workspace, so one is made first. Design:
+      # docs/decisions/0011.
+      - name: setup script
+        run: |
+          syn init "$env:RUNNER_TEMP\workspace"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\setup.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\scripts\setup.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # A new window gets its PATH from the registry only, so this step starts
+      # from that, without the Python this job installed.
+      - name: syn works from a new window's PATH
+        run: |
+          $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          $count = @($userPath -split ';' | Where-Object { $_.TrimEnd('\') -eq $bin }).Count
+          if ($count -ne 1) { throw "The user PATH holds $bin $count times, not once: $userPath" }
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $userPath
+          $found = (Get-Command syn).Source
+          if ($found -ne (Join-Path $bin 'syn.cmd')) { throw "syn resolved to $found" }
+          syn doctor
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       # Scans only the new commits: the PR's own commits, or the commits just
       # pushed to main. Older history was scanned when it was new.
       - name: gitleaks (new commits only)
