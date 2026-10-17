@@ -1,0 +1,25 @@
+# Checks staged files inside the Claude session, before a commit is made. CI
+# repeats ruff and gitleaks afterwards. Design: docs/decisions/0007.
+# Versions are pinned to release tags. gitleaks matches the version in ci.yml.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # Rule zero: no file over 1 MB.
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: trailing-whitespace
+        # Keep Markdown's two-space line breaks.
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
