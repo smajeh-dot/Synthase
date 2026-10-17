@@ -23,6 +23,7 @@ A fresh session has no test environment. If `python -m pytest` reports
 
 ```bash
 python -m venv .venv && .venv/bin/python -m pip install -q -e ".[dev]"
+.venv/bin/pre-commit install
 .venv/bin/python -m pytest -q && .venv/bin/ruff check .
 ```
 
