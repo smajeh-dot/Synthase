@@ -6,12 +6,19 @@ import sys
 from pathlib import Path
 
 from synthase import __version__
+from synthase.doctor import run_checks
 from synthase.workspace import DEFAULT_NAME, WorkspaceError, create_workspace
 
 INIT_HELP = (
     "Create the folder for your lab data, results, notes and config, outside "
     f"Synthase's code folder. Default: Documents\\{DEFAULT_NAME}. If your "
     "Documents folder syncs to OneDrive, the workspace is backed up automatically."
+)
+
+DOCTOR_HELP = (
+    "Check that Python, RDKit, the workspace and the config are all set up, "
+    "with the fix for anything that isn't, and list every config value not yet "
+    "checked against the literature. Exits with code 1 if any check fails."
 )
 
 WORKSPACE_CONTENTS = (
@@ -48,14 +55,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=f"where to create it (default: Documents\\{DEFAULT_NAME})",
     )
+    commands.add_parser(
+        "doctor",
+        help="check Synthase is installed and set up, and list unverified values",
+        description=DOCTOR_HELP,
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Saved to a file, Windows output can't hold characters such as ⁻ or ≤;
+    # show ? for them instead of crashing.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "init":
         return init(args.path)
+    if args.command == "doctor":
+        return doctor()
     # With no command, a bare `syn` shows the help text.
     parser.print_help()
     return 0
@@ -96,3 +115,39 @@ def init(path: Path | None) -> int:
         print("Next: open config.toml and check each value against the literature.")
     print("Synthase will use this workspace from now on.")
     return 0
+
+
+def doctor() -> int:
+    report = run_checks()
+    print(f"Synthase {__version__} self-test")
+    print()
+    for check in report.checks:
+        print(f"  {'ok' if check.passed else 'FAIL':<6}{check.text}")
+        if check.fix:
+            print(f"        Fix: {check.fix}")
+    print()
+
+    unverified = report.unverified()
+    if report.config is None:
+        print("The unverified config values can't be listed until the config is fixed.")
+    elif not unverified:
+        print("Every config value has been verified.")
+    else:
+        print(
+            f"Unverified config values ({len(unverified)}). "
+            "Results that use them show a warning:"
+        )
+        width = max(len(entry.key) for entry in unverified) + 3
+        for entry in unverified:
+            print(f"  {entry.key:<{width}}{entry.name}: {entry.describe()}")
+            print(f"  {'':<{width}}source: {entry.source}")
+    print()
+
+    if not report.failed:
+        print("All checks passed.")
+        return 0
+    if report.failed == 1:
+        print('1 check failed. Fix it, then run "syn doctor" again.')
+    else:
+        print(f'{report.failed} checks failed. Fix them, then run "syn doctor" again.')
+    return 1
