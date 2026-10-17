@@ -27,7 +27,7 @@ GitHub usernames and the Claude attribution lines in commits and PRs are fine. T
 Any real file the owner shares (for example a plate reader export) is format reference only. A committed copy must be a blank-plate export or hand-built with invented numbers.
 
 ## Session start
-1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone (the lowest-numbered milestone that still has open issues) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (template below).
+1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone (the lowest-numbered milestone that still has open issues) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (see Tracking).
 2. **Get onto the issue's branch** (see Branch names). Run `git fetch origin`, then:
    - If the issue's branch is already on GitHub (an earlier session started it), check it out and merge `origin/main` into it.
    - Otherwise create it from `origin/main`: `git checkout -b <name> origin/main`.
@@ -69,14 +69,14 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
   - Banned: `update`, `fix stuff`, `WIP`, `changes`, `misc`.
 - **What a commit contains:** one logical step, with its tests passing. Formatting-only or file-move changes go in their own commit.
 - **Push after every commit.** The cloud container is temporary.
-- **Open a draft PR after the first push.** Base `main`, Conventional title (it becomes the squash commit on `main`), body from the PR template below.
+- **Open a draft PR after the first push.** Base `main`, Conventional title (it becomes the squash commit on `main`), body from the PR template (see Tracking).
 - **Stay in scope.** For a new bug or idea, search the existing issues, then open a new one. Don't fix it on this branch. If you already changed out-of-scope code, revert it from this branch and paste the diff into the new issue so nothing is lost. **Never create a branch for side work.**
 - **Follow the config rule.** Every scientific constant lives in the config, never in code.
 
 ## Session end
 1. Make sure everything is committed and pushed. `git status` should show nothing except untracked files that rule zero keeps out. Name those files to the owner: they exist only in this container, so the owner should keep their own copies.
 2. Report the latest test results exactly. If anything fails, quote the failure.
-3. Update the PR checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green. Until the CI workflow exists, the tests passing locally stand in for CI, and you say so in the PR.
+3. Tick the boxes met in the PR's "Done when" checklist. Mark the PR **ready for review** only when every "Done when" box is ticked and CI is green. Until the CI workflow exists, the tests passing locally stand in for CI, and you say so in the PR.
 4. Post a **session note** on the issue, every session, even when the work is finished:
    ```
    **Session note (YYYY-MM-DD)**
@@ -111,11 +111,11 @@ The owner wants to be held accountable for their own steps. Never assume they kn
   - **Lab tag:** `lab-YYYY-MM-DD` on `main`, before real data is analysed for the write-up. The owner creates it on the GitHub website as a pre-release (see `owner-setup.md`).
 
 ## Tracking
-- **Issue template.** Title in Conventional style. Body with four headings:
-  - `## Goal`: one or two sentences
-  - `## Done when`: a checklist, always including a hand-worked test example
-  - `## Out of scope`
-  - `## Notes`
+- **Templates are the only definition of the formats.** Never copy their sections into this skill.
+  - Issues: `.github/ISSUE_TEMPLATE/task.md`. PRs: `.github/pull_request_template.md`.
+  - The website applies them for the owner. Issues and PRs Claude creates through the API don't get them, so read the file and copy its headings in order. Leave out the header block between the `---` lines and the `<!-- -->` hints, but follow what the hints say.
+  - Titles are always in Conventional style.
+  - A PR copies the issue's "Done when" checklist and ticks it there.
 - **Labels: use only this fixed set; never invent new ones.** Every issue gets one type and any flags. Add an area when the issue touches the app itself.
   - Type: `feature`, `bug`, `test`, `docs`, `infra`
   - Area: `chemistry`, `microbiology`, `interface`, `data`
@@ -124,12 +124,6 @@ The owner wants to be held accountable for their own steps. Never assume they kn
   - Milestones are ordered phases with **no due dates**, because sessions happen whenever the owner has time.
   - Work order comes from milestone order. Never set or suggest deadlines.
 - **`ROADMAP.md` holds the full feature list.** An item becomes an issue only when it's scheduled.
-- **PR template** (once `.github/pull_request_template.md` exists, use that file instead). Body sections:
-  - What and why
-  - `Closes #N`
-  - How it was tested: the hand-worked examples, plus the test output
-  - Config template changed? Values and their verification status
-  - Windows check: are the PowerShell setup and run instructions still correct?
 - **Size limit:** one task per PR. Split it if it passes about 400 changed lines.
 
 ## If something leaked
