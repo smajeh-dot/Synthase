@@ -33,7 +33,7 @@ Repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** → **N
   - Block force pushes
   - Require a pull request before merging, with **Required approvals set to 0**. You can't approve your own PR, so 1 would lock you out.
 - Leave the bypass list empty.
-- After the CI workflow exists (an M0 issue), edit the ruleset and also tick **Require status checks to pass**, then add the CI check.
+- Once the CI workflow (#8) has run at least once, edit the ruleset: tick **Require status checks to pass** → **Add checks** → type `ci` and pick it. GitHub only lists a check after it has run.
 
 ## 6. Labels
 Repo → **Issues** → **Labels**:
