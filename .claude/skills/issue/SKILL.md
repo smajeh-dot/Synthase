@@ -58,7 +58,7 @@ If the issue is closed or does not exist, say so and stop.
 
 ## 2. Output the triage
 
-Produce these sections, in this order:
+Produce these sections, in this order, in plain text with no emojis:
 
 ```markdown
 ## #N: <title>
@@ -70,11 +70,13 @@ Produce these sections, in this order:
 
 ### Done when
 <The issue's own checklist, copied word for word, each item marked:>
-- ☐ not started / ◐ partly / ☑ met (evidence)
-<Add an item only if something checkable is missing: `☐ [proposed] …`.>
+- [ ] <item> (not started)
+- [ ] <item> (partly: what's left)
+- [x] <item> (met: evidence)
+<Add an item only if something checkable is missing: `- [ ] [proposed] …`.>
 
 ### Context
-- Latest session note: next step, and each "waiting on owner" item: done ✓ / still waiting ✗
+- Latest session note: next step, and each "waiting on owner" item: done / still waiting
 - Depends on: #M open / closed (open means this issue is blocked)
 - Decisions that apply: `docs/decisions/NNNN-…`
 - Baseline tests: N passed (quote any failure)
@@ -82,7 +84,7 @@ Produce these sections, in this order:
 ### Where it lands in the code
 - `path/to/file.py:line`: what changes there
 
-### 🙋 Needs you
+### Needs you
 | # | Decision or input | Why it's yours | Needed | Claude's default |
 |---|---|---|---|---|
 
@@ -90,7 +92,7 @@ Produce these sections, in this order:
 - …
 
 ### Plan
-1. <Step>: 🤖 autonomous / 🙋 checkpoint with you
+1. <Step>: autonomous / checkpoint with you
 
 ### Suggested /goal
 /goal …
@@ -109,7 +111,7 @@ category:
 - **Terminal look and wording:** layout, colours, table shape, help text, error
   messages, explanations of jargon. Put the proposed wording or a sample of the
   output in the row itself, so the owner can approve it now. If the look needs
-  several rounds of feedback, plan a 🙋 checkpoint before the goal is set.
+  several rounds of feedback, plan a checkpoint with the owner before the goal is set.
 - **Scope and behaviour** the issue leaves open, contradictions between the issue,
   comments and code, and anything labelled `needs-decision`.
 - **Windows checks:** anything that must be run on the owner's laptop in PowerShell
@@ -133,8 +135,8 @@ conversation**. It can't run commands, so the condition must:
 - Require the work committed and pushed on the issue's branch, a draft PR open
   with its "Done when" boxes ticked and its URL printed, and the session note
   posted on the issue.
-- Cover only the 🤖 steps. 🙋 checkpoints happen **before** the goal is set, or
-  between two goals. A goal that waits on the owner stalls.
+- Cover only the autonomous steps. Checkpoints with the owner happen **before**
+  the goal is set, or between two goals. A goal that waits on the owner stalls.
 - Never include merging. Merging is the owner's step.
 - End with a bound: `or stop after 30 turns`.
 
@@ -149,7 +151,7 @@ Example (for an invented issue):
 End with the github-workflow "Your turn" list. It holds every outstanding owner
 item found while gathering, and always includes:
 
-- **Answer the 🙋 items** in chat, or reply "use your defaults". Claude needs these
+- **Answer the "Needs you" items** in chat, or reply "use your defaults". Claude needs these
   before it starts.
 - **Start the work:** paste the `/goal` line above, edited if you like, or say
   "go step by step".
