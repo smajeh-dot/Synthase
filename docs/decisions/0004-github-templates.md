@@ -15,5 +15,5 @@ GitHub applies templates only on its website. Issues and PRs created through the
 
 ## Consequences
 - Changing a format means editing the template file in a normal PR. The skill needs no change.
-- The issue's own "Done when" boxes stay unticked. The issue closes when its PR is merged.
+- The issue's own "Done when" boxes stay unticked. The issue closes when its PR is merged, or for a template change, once the owner's website test passes.
 - Nothing catches a damaged template automatically. The first sign would be a wrong-looking issue or PR.
