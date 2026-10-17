@@ -1,0 +1,128 @@
+# Synthase config TEMPLATE. Every value below is a PLACEHOLDER, not a checked value.
+#
+# `syn init` copies this file into your workspace as config.toml. Check each
+# value there against the literature, then:
+#   - set `value` to the checked value
+#   - put the reference in `source`
+#   - set `verified = true`
+# Never put checked values in this template: it is public, in the code repo.
+#
+# Every entry has exactly these fields (see docs/decisions/0008-config-format.md):
+#   name      plain-language label, used in warnings
+#   value     a number, a text value, a range [low, high], or a list of bands
+#   unit      the unit, or "" if there is none
+#   source    where the value comes from
+#   verified  true only once the value has been checked against the source
+# Any result that uses an unverified value prints a warning.
+
+# --- MIC (minimum inhibitory concentration) ---
+
+[mic.growth_threshold]
+name = "growth threshold"
+value = 0.1
+unit = "OD600"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# --- FICI (fractional inhibitory concentration index) ---
+# Each band covers values up to and including its `max`. The last band has no
+# `max` and covers everything above.
+
+[fici.bands]
+name = "FICI interpretation"
+value = [
+    { max = 0.5, label = "synergy" },
+    { max = 4.0, label = "no interaction" },
+    { label = "antagonism" },
+]
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# --- DMSO ---
+# The highest final concentration of DMSO allowed in a well.
+
+[dmso.limit]
+name = "DMSO limit"
+value = 1.0
+unit = "% v/v"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# --- Melting point ---
+# The widest melting range a pure sample should have.
+
+[melting_point.purity_range]
+name = "melting-point purity rule"
+value = 2.0
+unit = "°C"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# --- Spectroscopic ranges ---
+
+[spectra.ir_imine_cn]
+name = "imine IR C=N stretch"
+value = [1600.0, 1650.0]
+unit = "cm⁻¹"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[spectra.ir_chalcone_co]
+name = "chalcone IR C=O stretch"
+value = [1650.0, 1690.0]
+unit = "cm⁻¹"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[spectra.nmr_imine_ch]
+name = "imine ¹H NMR CH=N proton shift"
+value = [8.0, 9.0]
+unit = "ppm"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[spectra.nmr_chalcone_vinyl]
+name = "chalcone ¹H NMR vinyl proton shift"
+value = [7.0, 8.0]
+unit = "ppm"
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# --- Default units ---
+# Here the value is itself a unit, so `unit` is left empty.
+
+[units.mass]
+name = "default mass unit"
+value = "mg"
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[units.volume]
+name = "default volume unit"
+value = "µL"
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[units.concentration]
+name = "default concentration unit"
+value = "µg/mL"
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[units.amount]
+name = "default amount unit"
+value = "mmol"
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[units.temperature]
+name = "default temperature unit"
+value = "°C"
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
