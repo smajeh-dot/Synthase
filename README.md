@@ -36,4 +36,22 @@ See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
    syn doctor
    ```
 
-Next time, only step 3's `.\.venv\Scripts\Activate.ps1` is needed before using `syn`.
+7. **Put `syn` on your PATH.** Run the setup script from the code folder:
+   ```powershell
+   .\scripts\setup.ps1
+   ```
+   It checks Python 3.13, reuses `.venv` (or creates it), installs Synthase, puts `syn` on your PATH and finishes by running `syn doctor`. After that, `syn` works in any **new** PowerShell window, from any folder, without activating `.venv` ([how](docs/decisions/0011-setup-script.md)).
+
+## Updating after a change is merged
+
+1. Get the new code the way you usually do.
+2. Run the setup script again from the code folder. It's safe to run as often as you like:
+   ```powershell
+   .\scripts\setup.ps1
+   ```
+
+Most code changes work straight away, because Synthase is installed in "editable" mode (`-e`): `syn` runs the code in this folder directly. The script is only needed when a change adds a dependency or a new command, but running it every time does no harm.
+
+If PowerShell says running scripts is disabled, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (see step 3 for what it means), then run the script again.
+
+**To take `syn` off your PATH:** Windows Settings → search "Edit environment variables for your account" → select **Path** → **Edit** → remove the line ending in `Synthase\bin` → **OK**. You can then delete that `Synthase` folder in `%LOCALAPPDATA%` too.
