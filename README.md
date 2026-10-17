@@ -20,7 +20,7 @@ See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
    ```powershell
    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
    ```
-4. **Install Synthase** with its developer tools:
+4. **Install Synthase** with its developer tools. This also downloads RDKit (about 30 MB), the chemistry library Synthase uses:
    ```powershell
    python -m pip install -e ".[dev]"
    ```
@@ -29,6 +29,11 @@ See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
    syn --version
    syn --help
    pytest
+   ```
+6. **Create your workspace and run the self-test.** `syn init` makes the folder for your lab data, outside the code folder. `syn doctor` then checks everything is set up, says how to fix anything that isn't, and lists every config value you haven't checked against the literature yet:
+   ```powershell
+   syn init
+   syn doctor
    ```
 
 Next time, only step 3's `.\.venv\Scripts\Activate.ps1` is needed before using `syn`.
