@@ -1,9 +1,9 @@
 # 0014: The compound register and `syn compound add`
 
 ## Context
-The compound register is the first real command (M1, decision 0012). #32 builds its storage and `syn compound add`. Showing, editing, the extra fields and batches follow in #33 to #36. The issue left open where the register is saved, where the atomic weights for the molar mass come from, the prompt wording, and what happens with duplicate labels, wrong answers and invalid SMILES.
+The compound register is the first real command (M1, decision 0012). #32 builds its storage and the shared code that adds a compound. The `syn compound add` command that asks the questions is #37, split from #32 to keep each PR under the 400-line limit. Showing, editing, the extra fields and batches follow in #33 to #36. The issue left open where the register is saved, where the atomic weights for the molar mass come from, the prompt wording, and what happens with duplicate labels, wrong answers and invalid SMILES.
 
-The owner chose all the triage defaults below for #32 (2026-10-17).
+The owner chose all the triage defaults below for #32 (2026-10-17). The prompt and flag rules below are built in #37.
 
 ## Decision
 - **Storage:** one SQLite file, `compounds.sqlite`, in the workspace next to `config.toml`. SQLite is built into Python, so there is no new dependency. The file is created the first time a compound is added.
