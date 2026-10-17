@@ -13,7 +13,7 @@ The owner chose the defaults below during triage of #9 (2026-10-17).
 - **Versions are pinned to release tags,** not commit IDs. Tags are what `pre-commit autoupdate` manages.
 - **`pre-commit` goes in the `dev` extra,** so `pip install -e ".[dev]"` installs it along with pytest and ruff. It is a developer tool only; `syn` doesn't need it to run.
 - **Two layers:** the workflow skill says to run `pre-commit run` on the staged files before every commit, and each session also runs `pre-commit install`, so `git commit` runs the hooks too if a session forgets.
-- **CI is not changed.** It already runs ruff and gitleaks; running the size and whitespace checks in CI too is a separate issue.
+- **CI is not changed.** It already runs ruff and gitleaks; running the size and whitespace checks in CI too is #22.
 
 ## Consequences
 - The first run in a new container takes about a minute: pre-commit downloads the hooks, and gitleaks is built from source with Go.
