@@ -1,0 +1,69 @@
+# Checks every PR and every push to main on Windows. The ruleset requires the
+# `ci` check, so a red result blocks the merge. Design: docs/decisions/0006.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same PR cancels the older, now pointless run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e
+
+jobs:
+  ci:
+    name: ci
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # Full history, so gitleaks can scan a range of commits.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # 3.13 is pinned in pyproject.toml (decision 0002).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the project
+        run: python -m pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+      - name: pytest
+        run: python -m pytest
+
+      # Scans only the new commits: the PR's own commits, or the commits just
+      # pushed to main. Older history was scanned when it was new.
+      - name: gitleaks (new commits only)
+        env:
+          RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || format('{0}..{1}', github.event.before, github.sha) }}
+        run: |
+          $name = "gitleaks_${env:GITLEAKS_VERSION}_windows_x64.zip"
+          $zip = "$env:RUNNER_TEMP\$name"
+          Invoke-WebRequest -Uri "https://github.com/gitleaks/gitleaks/releases/download/v${env:GITLEAKS_VERSION}/$name" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:GITLEAKS_SHA256) { throw "gitleaks download checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\gitleaks"
+          Write-Host "Scanning commits $env:RANGE"
+          & "$env:RUNNER_TEMP\gitleaks\gitleaks.exe" git --log-opts="$env:RANGE" --redact --verbose --exit-code 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
