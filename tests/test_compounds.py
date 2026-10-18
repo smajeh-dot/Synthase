@@ -9,10 +9,14 @@ from synthase import compounds
 from synthase.compounds import (
     REGISTER_NAME,
     SCHEMA_VERSION,
+    Change,
     Compound,
     CompoundError,
     add_compound,
+    archive_compound,
     check_label,
+    compound_history,
+    edit_compound,
     get_compound,
     list_compounds,
     missing_fields,
@@ -297,3 +301,157 @@ def test_missing_fields_names_every_blank_one():
 def test_nothing_missing_once_every_field_is_filled(tmp_path):
     full = add_compound(tmp_path, "Test compound A", "chalcone", "CCO", notes="x")
     assert missing_fields(full) == []
+
+
+# --- Editing and archiving (#34) ---
+
+
+def say(reply):
+    """A confirm function that answers ``reply`` and records each question."""
+    asked = []
+
+    def confirm(change):
+        asked.append(change)
+        return reply
+
+    confirm.asked = asked
+    return confirm
+
+
+def test_edit_to_a_blank_field_needs_no_confirmation(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    confirm = say(False)
+    compound, changes = edit_compound(tmp_path, "1", confirm, notes="invented")
+    assert confirm.asked == []
+    assert changes == [Change("notes", None, "invented")]
+    assert get_compound(tmp_path, "1").notes == compound.notes == "invented"
+
+
+def test_edit_to_a_set_field_is_refused_without_a_yes(tmp_path):
+    add_compound(tmp_path, "Test compound A", smiles="CCO")
+    confirm = say(False)
+    compound, changes = edit_compound(tmp_path, "1", confirm, smiles="CCN")
+    assert confirm.asked == [Change("smiles", "CCO", "CCN")]
+    assert changes == []
+    assert get_compound(tmp_path, "1").smiles == compound.smiles == "CCO"
+    assert len(rows(tmp_path, "SELECT * FROM changes")) == 3
+
+
+def test_edit_to_a_set_field_is_applied_with_a_yes(tmp_path):
+    add_compound(tmp_path, "Test compound A", smiles="CCO")
+    compound, changes = edit_compound(tmp_path, "1", say(True), smiles="CCN")
+    assert changes == [Change("smiles", "CCO", "CCN")]
+    assert get_compound(tmp_path, "1") == compound
+    assert compound.smiles == "CCN"
+
+
+def test_a_new_smiles_updates_formula_and_molar_mass(tmp_path):
+    add_compound(tmp_path, "Test compound A", smiles="CCO")
+    compound, _ = edit_compound(tmp_path, "1", say(True), smiles="CCN")
+    # Worked by hand for C2H7N: 2 x 12.011 + 7 x 1.008 + 14.007 = 45.085 g/mol.
+    assert compound.formula == "C2H7N"
+    assert compound.molar_mass == pytest.approx(45.085, abs=0.001)
+    cleared, _ = edit_compound(tmp_path, "1", say(True), smiles="-")
+    assert cleared.smiles is cleared.formula is cleared.molar_mass is None
+    assert get_compound(tmp_path, "1") == cleared
+
+
+def test_only_confirmed_changes_are_made(tmp_path):
+    add_compound(tmp_path, "Test compound A", "chalcone", status="planned")
+    replies = iter([True, False])
+    compound, changes = edit_compound(
+        tmp_path,
+        "1",
+        lambda change: next(replies),
+        compound_class="other",
+        status="synthesised",
+        notes="invented",
+    )
+    assert changes == [
+        Change("class", "chalcone", "other"),
+        Change("notes", None, "invented"),
+    ]
+    assert (compound.compound_class, compound.status) == ("other", "planned")
+
+
+def test_each_change_appears_in_the_log_with_old_and_new_values(tmp_path, monkeypatch):
+    monkeypatch.setattr(compounds, "_now", lambda: "2026-01-02T03:04:05")
+    add_compound(tmp_path, "Test compound A", smiles="CCO")
+    monkeypatch.setattr(compounds, "_now", lambda: "2026-01-03T10:00:00")
+    edit_compound(tmp_path, "1", say(True), smiles="CCN", notes="invented")
+    compound, history = compound_history(tmp_path, "SYN-001")
+    assert compound.label == "Test compound A"
+    assert history == [
+        Change("label", None, "Test compound A", "2026-01-02T03:04:05"),
+        Change("smiles", None, "CCO", "2026-01-02T03:04:05"),
+        Change("status", None, "planned", "2026-01-02T03:04:05"),
+        Change("smiles", "CCO", "CCN", "2026-01-03T10:00:00"),
+        Change("notes", None, "invented", "2026-01-03T10:00:00"),
+    ]
+
+
+def test_unchanged_values_are_not_asked_about_or_logged(tmp_path):
+    add_compound(tmp_path, "Test compound A", "chalcone")
+    confirm = say(True)
+    _, changes = edit_compound(
+        tmp_path, "1", confirm, label="Test compound A", compound_class="Chalcone"
+    )
+    assert confirm.asked == changes == []
+    assert len(compound_history(tmp_path, "1")[1]) == 3
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        ({"smiles": "C1CC"}, "RDKit can't read the SMILES"),
+        ({"compound_class": "ketone"}, "isn't a compound class"),
+        ({"label": "-"}, "always has a label, so it can't be cleared"),
+        ({"status": "-"}, "always has a status, so it can't be cleared"),
+        ({"label": "test compound b"}, '"Test compound B" is already SYN-002.'),
+    ],
+)
+def test_a_refused_value_saves_nothing(tmp_path, flags, message):
+    add_compound(tmp_path, "Test compound A", "chalcone")
+    add_compound(tmp_path, "Test compound B")
+    with pytest.raises(CompoundError, match=message):
+        edit_compound(tmp_path, "1", say(True), notes="invented", **flags)
+    assert get_compound(tmp_path, "1").notes is None
+
+
+def test_a_compound_may_change_the_capitals_of_its_own_label(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    compound, _ = edit_compound(tmp_path, "1", say(True), label="Test Compound A")
+    assert compound.label == "Test Compound A"
+
+
+def test_archived_compound_is_hidden_from_list_and_found_by_get(tmp_path):
+    add_three(tmp_path)
+    archived = archive_compound(tmp_path, "SYN-002")
+    assert archived.archived
+    assert get_compound(tmp_path, "2") == archived
+    assert [c.id for c in list_compounds(tmp_path)] == ["SYN-001", "SYN-003"]
+    every = list_compounds(tmp_path, archived=True)
+    assert [c.id for c in every] == ["SYN-001", "SYN-002", "SYN-003"]
+    assert rows(tmp_path, "SELECT COUNT(*) FROM compounds") == [(3,)]
+
+
+def test_archive_and_restore_are_logged_and_checked(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    archive_compound(tmp_path, "1")
+    with pytest.raises(CompoundError, match="SYN-001 is already archived."):
+        archive_compound(tmp_path, "1")
+    restored = archive_compound(tmp_path, "1", archived=False)
+    assert not restored.archived
+    with pytest.raises(CompoundError, match="isn't archived, so there's nothing"):
+        archive_compound(tmp_path, "1", archived=False)
+    logged = [(c.name, c.old, c.new) for c in compound_history(tmp_path, "1")[1]]
+    assert logged[-2:] == [("archived", "no", "yes"), ("archived", "yes", "no")]
+
+
+def test_archived_compound_keeps_its_label_and_can_be_edited(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    archive_compound(tmp_path, "1")
+    with pytest.raises(CompoundError, match="is already SYN-001"):
+        add_compound(tmp_path, "Test compound A")
+    compound, _ = edit_compound(tmp_path, "1", say(True), notes="abandoned")
+    assert compound.archived and compound.notes == "abandoned"

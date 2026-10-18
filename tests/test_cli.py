@@ -635,3 +635,196 @@ def test_show_and_list_help_text(capsys):
         with pytest.raises(SystemExit):
             main(["compound", command, "--help"])
         assert text in " ".join(capsys.readouterr().out.split())
+
+
+# --- syn compound edit, archive, restore and history (#34), invented compounds ---
+
+EDIT_PROMPTS = [
+    "Label [Test compound A]: ",
+    "Class (Schiff base, chalcone, starting material, other) [chalcone]: ",
+    "SMILES [CCO]: ",
+    "Status (planned, synthesised, purified, characterised, tested) [planned]: ",
+    "Notes: ",
+]
+
+
+def test_edit_prompts_show_current_values_and_fill_a_blank_without_asking(
+    workspace, capsys, monkeypatch
+):
+    add_three(capsys)
+    prompts = answer(monkeypatch, "", "", "", "", "invented")
+    assert main(["compound", "edit", "SYN-001"]) == 0
+    assert prompts == EDIT_PROMPTS
+    out = capsys.readouterr().out
+    assert out.startswith(
+        "Editing SYN-001: Test compound A. "
+        "Press Enter to keep a value, or type - to clear it.\n"
+    )
+    assert "Saved 1 change to SYN-001: Test compound A\n" in out
+    assert "  notes        invented\n" in out
+    assert list_compounds(workspace)[0].notes == "invented"
+
+
+@pytest.mark.parametrize("reply", ["", "n", "maybe", EOFError])
+def test_edit_to_a_set_field_is_refused_without_a_yes(
+    workspace, capsys, monkeypatch, reply
+):
+    add_three(capsys)
+    prompts = answer(monkeypatch, reply)
+    assert main(["compound", "edit", "1", "--smiles", "CCN"]) == 0
+    assert prompts == ['Change the SMILES from "CCO" to "CCN"? [y/N] ']
+    out = capsys.readouterr().out
+    assert 'Kept the SMILES as "CCO".\nNothing was changed.\n' in out
+    assert list_compounds(workspace)[0].smiles == "CCO"
+
+
+def test_edit_to_a_set_field_is_applied_with_a_yes(workspace, capsys, monkeypatch):
+    add_three(capsys)
+    answer(monkeypatch, "yes")
+    assert main(["compound", "edit", "1", "--smiles", "CCN"]) == 0
+    out = capsys.readouterr().out
+    assert "Saved 1 change to SYN-001: Test compound A\n" in out
+    assert "  formula      C2H7N\n  molar mass   45.1 g/mol\n" in out
+
+
+def test_edit_prompts_ask_again_then_confirm_each_change(
+    workspace, capsys, monkeypatch
+):
+    add_three(capsys)
+    label, compound_class, smiles, status, notes = EDIT_PROMPTS
+    prompts = answer(
+        monkeypatch,
+        *["-", "", "", "-", "ketone", "-", "finished", "tested", "", "y", "n"],
+    )
+    assert main(["compound", "edit", "1"]) == 0
+    assert prompts == [
+        label,
+        label,
+        compound_class,
+        smiles,
+        status,
+        status,
+        status,
+        status,
+        notes,
+        'Clear the SMILES ("CCO")? [y/N] ',
+        'Change the status from "planned" to "tested"? [y/N] ',
+    ]
+    out = capsys.readouterr().out
+    assert "A compound always has a label, so it can't be cleared.\n" in out
+    assert "A compound always has a status, so it can't be cleared.\n" in out
+    assert '"finished" isn\'t a status.' in out
+    assert 'Kept the status as "planned".\n' in out
+    compound = list_compounds(workspace)[0]
+    assert (compound.smiles, compound.formula, compound.status) == (
+        None,
+        None,
+        "planned",
+    )
+
+
+def test_edit_with_a_wrong_flag_fails_and_saves_nothing(workspace, capsys):
+    add_three(capsys)
+    argv = ["compound", "edit", "1", "--notes", "x", "--label", "test compound b"]
+    assert main(argv) == 1
+    captured = capsys.readouterr()
+    assert captured.err == (
+        '"Test compound B" is already SYN-002. Choose another label.\n'
+    )
+    assert list_compounds(workspace)[0].notes is None
+
+
+@pytest.mark.parametrize("stop", [EOFError, KeyboardInterrupt])
+def test_stopping_an_edit_partway_changes_nothing(workspace, capsys, monkeypatch, stop):
+    add_three(capsys)
+    answer(monkeypatch, "Renamed", stop)
+    assert main(["compound", "edit", "1"]) == 1
+    assert capsys.readouterr().err == "Nothing was changed.\n"
+    assert list_compounds(workspace)[0].label == "Test compound A"
+
+
+def test_history_prints_each_change_with_old_and_new_values(
+    workspace, capsys, monkeypatch
+):
+    add_three(capsys)
+    answer(monkeypatch, "y")
+    assert main(["compound", "edit", "1", "--smiles", "CCN"]) == 0
+    capsys.readouterr()
+    assert main(["compound", "history", "SYN-001"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "History of SYN-001: Test compound A"
+    assert [line[20:] for line in lines[1:]] == [
+        "label   (blank) -> Test compound A",
+        "class   (blank) -> chalcone",
+        "SMILES  (blank) -> CCO",
+        "status  (blank) -> planned",
+        "SMILES  CCO -> CCN",
+    ]
+    assert all(line[2:6].isdigit() and line[12] == " " for line in lines[1:])
+
+
+def test_archived_compound_is_hidden_from_list_and_found_by_show(
+    workspace, capsys, monkeypatch
+):
+    add_three(capsys)
+    prompts = answer(monkeypatch, "y")
+    assert main(["compound", "archive", "2"]) == 0
+    assert prompts == [
+        "Archive SYN-002 (Test compound B)? It stays in the register but is "
+        'hidden from "syn compound list". [y/N] '
+    ]
+    assert capsys.readouterr().out == (
+        'Archived SYN-002: Test compound B. Undo with "syn compound restore SYN-002".\n'
+    )
+    assert main(["compound", "list"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines[1:-1]] == ["SYN-001", "SYN-003"]
+    assert lines[-1] == "2 compounds (1 archived, hidden; add --all to see it)."
+    assert main(["compound", "list", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert "SYN-002  Test compound B (archived)  " in out
+    assert out.endswith("\n3 compounds.\n")
+    assert main(["compound", "show", "SYN-002"]) == 0
+    assert capsys.readouterr().out.startswith("SYN-002: Test compound B (archived)\n")
+
+
+def test_archive_needs_a_yes_and_restore_brings_it_back(workspace, capsys, monkeypatch):
+    add_three(capsys)
+    answer(monkeypatch, "")
+    assert main(["compound", "archive", "2"]) == 0
+    assert capsys.readouterr().out.endswith("Kept SYN-002 as it was.\n")
+    assert len(list_compounds(workspace)) == 3
+    answer(monkeypatch, "y")
+    assert main(["compound", "archive", "2"]) == 0
+    assert main(["compound", "archive", "2"]) == 1
+    assert capsys.readouterr().err == "SYN-002 is already archived.\n"
+    assert main(["compound", "restore", "2"]) == 0
+    assert capsys.readouterr().out == (
+        'Restored SYN-002: Test compound B. It shows in "syn compound list" again.\n'
+    )
+    assert main(["compound", "restore", "2"]) == 1
+    assert "isn't archived" in capsys.readouterr().err
+    assert len(list_compounds(workspace)) == 3
+
+
+def test_list_with_every_compound_archived_says_so(workspace, capsys, monkeypatch):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    answer(monkeypatch, "y")
+    assert main(["compound", "archive", "1"]) == 0
+    capsys.readouterr()
+    assert main(["compound", "list"]) == 0
+    assert capsys.readouterr().out == (
+        "Every compound is archived. Add --all to see them.\n"
+    )
+
+
+def test_edit_archive_and_history_help_text(capsys):
+    for command, text in (
+        ("edit", "Fill in or change a compound's details. With no options, "),
+        ("archive", "Hide a compound you have given up on from"),
+        ("restore", "Bring an archived compound back into"),
+        ("history", "Show every change recorded for one compound, oldest first"),
+    ):
+        with pytest.raises(SystemExit):
+            main(["compound", command, "--help"])
+        assert text in " ".join(capsys.readouterr().out.split())
