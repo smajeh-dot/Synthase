@@ -4,6 +4,7 @@ import asyncio
 
 from synthase import app as app_module
 from synthase.app import NOT_YET, UNKNOWN, Message, SynthaseApp
+from synthase.commands import ROOT_HINT
 from synthase.config import read_template
 from synthase.history import FILE_NAME
 from synthase.workspace import remember
@@ -223,5 +224,71 @@ def test_a_history_file_that_cant_be_saved_is_reported_once(tmp_path, monkeypatc
         assert cautions[0].startswith("Command history couldn't be saved: ")
         await pilot.press("up")
         assert bar(app) == "/two"
+
+    run(steps)
+
+
+def test_help_lists_every_command_then_how_to_get_more():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help")
+        echo, rows, hint = messages(app)
+        assert echo == ("echo", "/help")
+        assert rows[0] == "normal"
+        lines = rows[1].splitlines()
+        assert [line.split()[0] for line in lines] == [
+            "/init",
+            "/doctor",
+            "/compound",
+            "/help",
+            "/quit",
+        ]
+        assert "keep track of the project's compounds" in lines[2]
+        assert hint == ("hint", ROOT_HINT)
+
+    run(steps)
+
+
+def test_help_on_compound_shows_its_description_and_subcommands():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help Compound")
+        _, page, hint = messages(app)
+        assert page[1].startswith(
+            "Keep track of the project's compounds, from idea to tested.\n\n"
+        )
+        assert "/compound batch  add a batch made of a compound" in page[1]
+        assert hint[1].endswith("e.g. /help compound add.")
+
+    run(steps)
+
+
+def test_help_on_one_command_shows_its_options_and_wraps_at_80_columns():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help compound list")
+        _, page = messages(app)
+        assert page[1].startswith("/compound list [--status STATUS]")
+        assert "--csv FILE  also save the table as a CSV file." in page[1]
+        # The help column wraps inside the window, under its own column.
+        body = app.query(Message).last().query_one(".body")
+        assert body.size.width < 80
+        assert body.size.height > len(page[1].splitlines())
+
+    run(steps, size=(80, 24))
+
+
+def test_an_unknown_help_topic_lists_the_topics():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help foo")
+        assert messages(app)[-1] == (
+            "error",
+            'There\'s no help on "foo". Topics: init, doctor, compound, help, quit.',
+        )
+
+    run(steps)
+
+
+def test_tab_completes_a_help_topic():
+    async def steps(app, pilot):
+        await press_tab(app, pilot, "/help co")
+        assert bar(app) == "/help compound "
 
     run(steps)

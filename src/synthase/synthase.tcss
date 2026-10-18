@@ -54,6 +54,18 @@ Screen {
 .msg.-error > .glyph { color: $error; text-style: bold; }
 .msg.-error > .body { color: $error; }
 
+/* /help pages: paragraphs, then names in one column and their help in the next,
+   wrapping under itself. A blank row between the parts. */
+.msg.-help > .body > * { height: auto; margin-top: 1; }
+.msg.-help > .body > *:first-child { margin-top: 0; }
+.msg.-help .rows {
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-help .rows > * { height: auto; }
+
 /* Bottom block: rule, input, rule, then the status line */
 #bottom {
     dock: bottom;
