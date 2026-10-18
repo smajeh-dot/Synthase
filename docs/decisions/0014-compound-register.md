@@ -1,4 +1,4 @@
-# 0014: The compound register and `syn compound add`
+# 0014: The compound register, `syn compound add`, `show` and `list`
 
 ## Context
 The compound register is the first real command (M1, decision 0012). #32 builds its storage and the shared code that adds a compound. The `syn compound add` command that asks the questions is #37, split from #32 to keep each PR under the 400-line limit. Showing, editing, the extra fields and batches follow in #33 to #36. The issue left open where the register is saved, where the atomic weights for the molar mass come from, the prompt wording, and what happens with duplicate labels, wrong answers and invalid SMILES.
@@ -25,10 +25,18 @@ The owner chose all the triage defaults below for #32 (2026-10-17). The prompt a
   - Flags without `--label` fail with: `Give the label with --label, or run "syn compound add" with no flags to be asked for each field.`
   - `syn compound` on its own shows the `compound` help, as a bare `syn` does.
   - Help text: `syn --help` lists `compound` as "keep track of the project's compounds, from idea to tested". `syn compound add --help` says: "Add a compound to the register. With no options, Synthase asks for each detail; press Enter to skip any but the label. With options, it asks nothing."
+- **Details settled for #33** (the owner chose the triage defaults, 2026-10-18). The owner noted that the app in M2 gets its own interface, so this plain command-line look is not designed further now.
+  - `syn compound show <ID>` prints the same field lines as `add`, leaving out blank fields, then a "Still missing:" list: `no class yet`, `no SMILES yet, so no formula or molar mass`, `no notes yet`. With nothing blank it prints `Nothing missing.` The #35 fields join the list when they arrive.
+  - An ID can be typed as `SYN-001`, `syn-1` or `1`. Anything else gives `"abc" isn't a compound ID. IDs look like SYN-001.` An unknown ID gives `There's no compound SYN-042 in the register. Run "syn compound list" to see every ID.` Both exit with code 1.
+  - `syn compound list` prints aligned columns (ID, Label, Class, Status, Formula, Molar mass (g/mol)) in ID order, with `-` in blank cells and labels never cut short. A count follows: `2 compounds.`, or `1 of 3 compounds (status: planned).` when filtered.
+  - `--status` and `--class` take one value each, in the same forgiving forms as `add`. Together, a compound must match both. A value not on the list gives the same message as `add` and exit code 1.
+  - An empty register prints `The register is empty. Add a compound with "syn compound add".` A filter that matches nothing prints `No compounds match (status: tested).` Both exit with code 0, and nothing is saved as CSV.
+  - `--csv <file>` saves the same columns and values as the table, molar mass to 3 s.f., with blank cells left empty. The file is UTF-8 with a byte-order mark (`utf-8-sig`), so Excel on Windows shows every letter correctly. The path is taken as typed, relative to the current folder. An existing file is replaced only after a yes to `<file> already exists. Replace it? [y/N]`. A file that can't be written, for example because Excel has it open, gives a plain message and exit code 1.
+  - Reading never creates the register: `show` and `list` open it read-only, and only if it exists.
 - **Wording:** after adding, `syn compound add` prints `Added SYN-001: <label>`, each filled field, and `Add more details later with "syn compound edit SYN-001".` That command arrives in #34.
 
 ## Consequences
 - The register is a single file, so backing up or moving the workspace takes it along.
 - SQLite files can't be read in a text editor. `syn compound show` and `list` (#33) are the way to read the register.
 - Molar masses follow the atomic weights of the installed RDKit version, which may change slightly between versions.
-- The tests read the register file directly with `sqlite3` until #33 adds functions for reading it.
+- The command-line tests read the register through `list_compounds` (#33). The register tests still read the file with `sqlite3`, because they check the tables and the change log themselves.
