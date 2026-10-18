@@ -7,7 +7,7 @@ The owner chose all the triage defaults below for #32 (2026-10-17). The prompt a
 
 ## Decision
 - **Storage:** one SQLite file, `compounds.sqlite`, in the workspace next to `config.toml`. SQLite is built into Python, so there is no new dependency. The file is created the first time a compound is added.
-- **Tables:** `compounds`, `batches`, `spectra` and `changes` (the change log) are all created at once. The schema version is kept in SQLite's `user_version`, starting at 1, so a later version of Synthase can upgrade the file. A file with a newer version than Synthase knows is refused with "update Synthase". #35 adds the characterisation, handling and safety columns as an upgrade to version 2 (see "Details settled for #35"). #36 may change the `batches` and `spectra` columns before anything is saved in them.
+- **Tables:** `compounds`, `batches`, `spectra` and `changes` (the change log) are all created at once. The schema version is kept in SQLite's `user_version`, starting at 1, so a later version of Synthase can upgrade the file. A file with a newer version than Synthase knows is refused with "update Synthase". #35 adds the characterisation, handling and safety columns as an upgrade to version 2 (see "Details settled for #35"). #36 may change the `batches` and `spectra` columns before anything is saved in them (see "Details settled for #36").
 - **IDs:** `SYN-` and the row number, zero-padded to three digits (`SYN-001`). SQLite's `AUTOINCREMENT` makes sure a number is never used twice, even if a row were removed by hand. After `SYN-999` comes `SYN-1000`.
 - **Shared command layer:** `synthase/compounds.py` does the work and raises `CompoundError` with a plain-language message. It never prints or asks anything. `synthase/cli.py` asks the questions and prints the results. The M2 app will call the same functions.
 - **One quick write per command:** each command opens the file, writes everything in one transaction and closes it again. That reduces the chance of OneDrive syncing a half-written file. `/backup` (M5) is the proper safety net.
@@ -56,6 +56,21 @@ The owner chose all the triage defaults below for #32 (2026-10-17). The prompt a
   - **Flags:** `--mp`, `--rf`, `--rf-solvent`, `--appearance`, `--coloured`, `--solubility`, `--dmso-stock`, `--storage`, `--risk-assessment` and `--hazards`. With `edit`, `-` clears any of them. Changing a set value asks first, as for the other fields, and every change is logged with its value as shown (`455–457 K`, `yes`).
   - **Card:** after the first fields come `Characterisation`, `Handling` and `Safety` headings with their filled fields; a group with nothing filled is left out. "Still missing" adds `no melting point yet`, `no Rf value yet`, `no appearance yet`, `not recorded whether it is coloured`, `no solubility yet`, `no DMSO stock concentration yet`, `no storage conditions yet`, `no risk assessment recorded` (or `risk assessment not done yet` after a no) and `no hazard notes yet`.
   - `list` and its CSV are unchanged.
+- **Details settled for #36** (the owner chose the triage defaults, 2026-10-18):
+  - The register moves to schema version 3, which adds a `kind` column to `spectra`. The `batches` columns already fit. Both tables were still empty everywhere.
+  - `syn compound batch <ID>` adds a batch, and `syn compound spectrum <ID> <FILE>` links a spectra file. With no options, each asks its questions; with options, they ask nothing.
+  - **Batch date:** typed as `2026-10-18` or `18/10/2026`; blank means today. A date that doesn't exist, or is in the future, is refused.
+  - **Mass made:** a number above zero with `mg` or `g` (`152 mg`); a bare number is refused. It is saved in grams and shown to 3 s.f., in mg below 1 g and in g from 1 g up.
+  - **Yield:** a percentage (`64.2`, or `64.2%`), shown to 3 s.f. Below 0 is refused. Above 100 is saved, with `A yield over 100% usually means the product is still wet or impure.`
+  - A batch needs its mass, its yield or both. The date is always saved.
+  - Batches are numbered per compound in the order they are added: batch 1, batch 2 and so on.
+  - Adding a batch never changes the status. If the compound is still planned, Synthase prints `SYN-001 is still "planned". Change it with "syn compound edit SYN-001 --status synthesised".`
+  - The shared function `add_batch` takes the date and numbers, not typed text, so `/yield` (M3) can pass what it has worked out. It checks them the same way.
+  - **Spectra files must be inside the workspace.** A relative path counts from the current folder, or from the workspace if there is no such file in the current folder. The link is saved relative to the workspace, so moving the whole workspace keeps it working. A file outside is refused: `Spectra files must be inside the workspace (<workspace>). Copy it in, for example into a "spectra" folder, then link it.` A missing file gives `There's no file at <path>.` Linking the same file to the same compound twice is refused.
+  - **Kind of spectrum:** optional, one of IR, 1H NMR, 13C NMR, mass spec, UV-vis or other, in the same forgiving forms as class.
+  - **Card:** `syn compound show` adds a `Batches` section (`1  2026-10-18  152 mg  64.2%`, with `-` for a blank) and a `Spectra` section (`IR  spectra\SYN-001 IR.csv  (added 2026-10-18)`). A linked file that has since moved or been deleted shows `(file not found)`. "Still missing" adds `no batches yet` and `no spectra linked yet`.
+  - The change log records `batch  (blank) -> 1: 2026-10-18, 152 mg, 64.2%` and `spectrum  (blank) -> IR spectra/SYN-001 IR.csv`.
+  - Batches and links can't be corrected or removed yet; that is a separate issue.
 - **Wording:** after adding, `syn compound add` prints `Added SYN-001: <label>`, each filled field, and `Add more details later with "syn compound edit SYN-001".` That command arrives in #34.
 
 ## Consequences
