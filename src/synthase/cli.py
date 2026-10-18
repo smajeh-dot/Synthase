@@ -12,14 +12,19 @@ from synthase.compounds import (
     DEFAULT_STATUS,
     STATUSES,
     TABLE_HEADINGS,
+    Change,
     Compound,
     CompoundError,
     add_compound,
+    archive_compound,
     check_label,
+    compound_history,
+    edit_compound,
     get_compound,
     list_compounds,
     missing_fields,
     parse_class,
+    parse_field,
     parse_status,
     read_smiles,
     table_row,
@@ -62,6 +67,26 @@ COMPOUND_SHOW_HELP = (
 COMPOUND_LIST_HELP = (
     "List every compound in a table. Filter it with --status or --class, "
     "and save it with --csv."
+)
+
+COMPOUND_EDIT_HELP = (
+    "Fill in or change a compound's details. With no options, Synthase asks "
+    "about each one and shows its current value; press Enter to keep it, or type "
+    "- to clear it. With options, it changes only those. Changing a value that is "
+    "already set always asks first."
+)
+
+COMPOUND_ARCHIVE_HELP = (
+    'Hide a compound you have given up on from "syn compound list". Nothing is '
+    'deleted: "syn compound show" still finds it, and "syn compound restore" '
+    "brings it back."
+)
+
+COMPOUND_RESTORE_HELP = 'Bring an archived compound back into "syn compound list".'
+
+COMPOUND_HISTORY_HELP = (
+    "Show every change recorded for one compound, oldest first, with the date "
+    "and the old and new values."
 )
 
 LABEL_NEEDED = (
@@ -119,20 +144,24 @@ def build_parser() -> argparse.ArgumentParser:
         "add", help="add a compound to the register", description=COMPOUND_ADD_HELP
     )
     add.add_argument("--label", help="a short name for it (needed with any option)")
-    add.add_argument(
-        "--class",
-        dest="compound_class",
-        metavar="CLASS",
-        help=", ".join(CLASSES[:-1]) + f" or {CLASSES[-1]}",
+    add_field_options(add, f"{DEFAULT_STATUS} (the default), ")
+    edit = compound_commands.add_parser(
+        "edit",
+        help="fill in or change a compound's details",
+        description=COMPOUND_EDIT_HELP,
     )
-    add.add_argument("--smiles", help="its structure, written as a SMILES")
-    add.add_argument(
-        "--status",
-        help=f"{DEFAULT_STATUS} (the default), "
-        + ", ".join(STATUSES[1:-1])
-        + f" or {STATUSES[-1]}",
-    )
-    add.add_argument("--notes", help="anything else worth recording")
+    edit.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    edit.add_argument("--label", help="a new short name for it")
+    add_field_options(edit, f"{DEFAULT_STATUS}, ", " (- clears it)")
+    for name, short, description in (
+        ("archive", "hide a compound you have given up on", COMPOUND_ARCHIVE_HELP),
+        ("restore", "bring an archived compound back", COMPOUND_RESTORE_HELP),
+        ("history", "show every change made to a compound", COMPOUND_HISTORY_HELP),
+    ):
+        command = compound_commands.add_parser(
+            name, help=short, description=description
+        )
+        command.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
     show = compound_commands.add_parser(
         "show",
         help="show everything recorded about one compound",
@@ -152,6 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="only compounds of this class: " + ", ".join(CLASSES),
     )
     listing.add_argument(
+        "--all", action="store_true", help="also show archived compounds"
+    )
+    listing.add_argument(
         "--csv",
         metavar="FILE",
         type=Path,
@@ -159,6 +191,24 @@ def build_parser() -> argparse.ArgumentParser:
         "compounds folder set in config.toml, or in the workspace's results folder",
     )
     return parser
+
+
+def add_field_options(
+    parser: argparse.ArgumentParser, first_status: str, clears: str = ""
+) -> None:
+    """The --class, --smiles, --status and --notes options of add and edit."""
+    parser.add_argument(
+        "--class",
+        dest="compound_class",
+        metavar="CLASS",
+        help=", ".join(CLASSES[:-1]) + f" or {CLASSES[-1]}" + clears,
+    )
+    parser.add_argument("--smiles", help="its structure, written as a SMILES" + clears)
+    parser.add_argument(
+        "--status",
+        help=first_status + ", ".join(STATUSES[1:-1]) + f" or {STATUSES[-1]}",
+    )
+    parser.add_argument("--notes", help="anything else worth recording" + clears)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,6 +230,14 @@ def main(argv: list[str] | None = None) -> int:
             return compound_show(args.id)
         if args.compound_command == "list":
             return compound_list(args)
+        if args.compound_command == "edit":
+            return compound_edit(args)
+        if args.compound_command == "archive":
+            return compound_archive(args.id)
+        if args.compound_command == "restore":
+            return compound_restore(args.id)
+        if args.compound_command == "history":
+            return compound_history_command(args.id)
         args.compound_parser.print_help()
         return 0
     # With no command, a bare `syn` shows the help text.
@@ -323,7 +381,8 @@ def compound_show(text: str) -> int:
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
-    print(f"{compound.id}: {compound.label}")
+    archived = " (archived)" if compound.archived else ""
+    print(f"{compound.id}: {compound.label}{archived}")
     print_fields(compound)
     print()
     missing = missing_fields(compound)
@@ -339,8 +398,10 @@ def compound_show(text: str) -> int:
 def compound_list(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
-        shown = list_compounds(workspace, args.status, args.compound_class)
-        everything = list_compounds(workspace)
+        shown = list_compounds(
+            workspace, args.status, args.compound_class, archived=args.all
+        )
+        everything = list_compounds(workspace, archived=True)
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
@@ -355,15 +416,161 @@ def compound_list(args: argparse.Namespace) -> int:
         )
         if value is not None
     )
+    hidden = 0 if args.all else sum(compound.archived for compound in everything)
     if not shown:
-        print(f"No compounds match ({filters}).")
+        if filters:
+            print(f"No compounds match ({filters}).")
+        else:
+            print("Every compound is archived. Add --all to see them.")
         return 0
 
     rows = [table_row(compound) for compound in shown]
     print_table(TABLE_HEADINGS, rows)
-    count = f"{len(everything)} compound{'' if len(everything) == 1 else 's'}"
-    print(f"{len(shown)} of {count} ({filters})." if filters else f"{count}.")
+    total = len(everything) - hidden
+    count = f"{total} compound{'' if total == 1 else 's'}"
+    if filters:
+        count = f"{len(shown)} of {count}"
+    if hidden:
+        them = "it" if hidden == 1 else "them"
+        filters = "; ".join(
+            part
+            for part in (filters, f"{hidden} archived, hidden; add --all to see {them}")
+            if part
+        )
+    print(f"{count} ({filters})." if filters else f"{count}.")
     return 0 if args.csv is None else save_csv(args.csv, workspace, rows)
+
+
+def compound_edit(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound = get_compound(workspace, args.id)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    flags = (args.label, args.compound_class, args.smiles, args.status, args.notes)
+    try:
+        if all(flag is None for flag in flags):
+            flags = ask_edit(workspace, compound)
+        compound, changes = edit_compound(workspace, args.id, confirm_change, *flags)
+    except CompoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Nothing was changed.", file=sys.stderr)
+        return 1
+    if not changes:
+        print("Nothing was changed.")
+        return 0
+    print(
+        f"Saved {len(changes)} change{'' if len(changes) == 1 else 's'} "
+        f"to {compound.id}: {compound.label}"
+    )
+    print_fields(compound)
+    return 0
+
+
+def ask_edit(workspace: Path, compound: Compound) -> tuple[str | None, ...]:
+    """Ask about each field of ``compound``, showing its current value.
+
+    Returns the answers, with None for each field to keep. Raises EOFError or
+    KeyboardInterrupt if the user stops partway.
+    """
+    print(
+        f"Editing {compound.id}: {compound.label}. "
+        "Press Enter to keep a value, or type - to clear it."
+    )
+    answers = []
+    for field, question, current in (
+        ("label", "Label", compound.label),
+        ("class", f"Class ({', '.join(CLASSES)})", compound.compound_class),
+        ("smiles", "SMILES", compound.smiles),
+        ("status", f"Status ({', '.join(STATUSES)})", compound.status),
+        ("notes", "Notes", compound.notes),
+    ):
+        shown = "" if current is None else f" [{current}]"
+
+        def check(text: str, field: str = field) -> str | None:
+            if not text.strip():
+                return None
+            parse_field(workspace, compound.number, field, text)
+            return text
+
+        answers.append(ask_until(f"{question}{shown}: ", check))
+    return tuple(answers)
+
+
+def confirm_change(change: Change) -> bool:
+    """Ask before changing or clearing a value that is already set."""
+    if change.new is None:
+        question = f'Clear the {change.name} ("{change.old}")? [y/N] '
+    else:
+        question = (
+            f'Change the {change.name} from "{change.old}" to "{change.new}"? [y/N] '
+        )
+    if ask_yes(question):
+        return True
+    print(f'Kept the {change.name} as "{change.old}".')
+    return False
+
+
+def compound_archive(text: str) -> int:
+    try:
+        workspace = current_workspace()
+        compound = get_compound(workspace, text)
+        if compound.archived:
+            raise CompoundError(f"{compound.id} is already archived.")
+        question = (
+            f"Archive {compound.id} ({compound.label})? It stays in the register "
+            'but is hidden from "syn compound list". [y/N] '
+        )
+        if not ask_yes(question):
+            print(f"Kept {compound.id} as it was.")
+            return 0
+        archive_compound(workspace, text)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print()
+        print("Nothing was changed.", file=sys.stderr)
+        return 1
+    print(
+        f"Archived {compound.id}: {compound.label}. "
+        f'Undo with "syn compound restore {compound.id}".'
+    )
+    return 0
+
+
+def compound_restore(text: str) -> int:
+    try:
+        compound = archive_compound(current_workspace(), text, archived=False)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(
+        f"Restored {compound.id}: {compound.label}. "
+        'It shows in "syn compound list" again.'
+    )
+    return 0
+
+
+def compound_history_command(text: str) -> int:
+    try:
+        compound, changes = compound_history(current_workspace(), text)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(f"History of {compound.id}: {compound.label}")
+    width = max((len(change.name) for change in changes), default=0)
+    for change in changes:
+        when = (change.changed or "")[:16].replace("T", " ")
+        old, new = (
+            "(blank)" if value is None else value for value in (change.old, change.new)
+        )
+        print(f"  {when}  {change.name:<{width}}  {old} -> {new}")
+    return 0
 
 
 def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -> None:
