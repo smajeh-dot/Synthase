@@ -48,6 +48,14 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
   - **Up and down.** Up steps back through earlier commands, newest first. Down steps forward again, and Down past the newest empties the bar. A half-typed line is not kept when Up is pressed.
   - **No workspace, or saving fails.** With no workspace yet, history works for that session only and nothing is saved. If the file can't be written (for example while OneDrive has it locked), the app shows `! Command history couldn't be saved: <reason>` once per session and carries on.
 
+- **Details settled for #54** (the owner chose the triage defaults, 2026-10-18):
+  - **One source.** `/help` reads the same `build_parser()` as `syn --help`, through the command list in `synthase/commands.py`: each command's one-line `help=`, its `description=`, and its arguments and options with their help. Only `/help` and `/quit` have their text in `commands.py`, because `syn` has no such commands. A new command or option added to the parser shows in `/help` with no extra work.
+  - **Two levels.** `/help` lists every command, one line each, then `› Type /help <command> for more, e.g. /help compound.` A command with subcommands (`/help compound`) shows its description and one line per subcommand, then `› For a command's options, type /help compound <command>, e.g. /help compound add.` (the example is its first subcommand). One command (`/help compound batch`) shows a usage line such as `/compound batch ID [--date DATE] [--mass MASS] [--yield PERCENT]`, its description, then its arguments and options. `-h`/`--help` and `--version` are left out.
+  - **Two columns.** Names sit in one column and their help in a second, so a long line wraps under its own column. Help uses the normal text colour, with no new colour.
+  - **Unknown topics.** `✗ There's no help on "foo". Topics: init, doctor, compound, help, quit.` Below a command it lists that command's subcommands instead. Capitals and a leading slash are ignored, so `/help /Compound` works.
+  - **The `syn …` wording stays.** Some descriptions point to `syn compound list` and similar. They're shown unchanged, because those commands only run in PowerShell for now. Each issue that wires a command into the app (#55 to #59) updates the wording.
+  - **Tab after `/help`** completes the topics, using the same command list: `/help co` becomes `/help compound`.
+
 ## Consequences
 - Synthase gains its second run-time dependency. A new Textual major version needs a deliberate upgrade, because the pin stops at 9.
 - `workspace.current_workspace` now raises two kinds of `WorkspaceError`: `NoWorkspace` and `WorkspaceMissing`. The status line can then tell the two apart, and the plain command line's messages don't change.

@@ -8,11 +8,11 @@ import sys
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import HorizontalGroup, Vertical, VerticalScroll
+from textual.containers import Grid, HorizontalGroup, Vertical, VerticalScroll
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
-from synthase.commands import command_list, complete, find
+from synthase.commands import HELP, HelpPage, command_list, complete, find, help_page
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
 from synthase.theme import SYNTHASE
@@ -54,6 +54,26 @@ class Message(HorizontalGroup):
         if GLYPHS[self.kind]:
             yield Label(GLYPHS[self.kind], classes="glyph", markup=False)
         yield Static(self.text, classes="body", markup=False)
+
+
+class HelpMessage(Message):
+    """A /help page: its paragraphs, then names and their help in two columns."""
+
+    def __init__(self, page: HelpPage) -> None:
+        rows = "\n".join(f"{name}  {text}" for name, text in page.rows)
+        super().__init__("normal", "\n\n".join([*page.paragraphs, rows]).strip())
+        self.add_class("-help")
+        self.page = page
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            for paragraph in self.page.paragraphs:
+                yield Static(paragraph, classes="paragraph", markup=False)
+            if self.page.rows:
+                with Grid(classes="rows"):
+                    for name, text in self.page.rows:
+                        yield Label(name, classes="name", markup=False)
+                        yield Static(text, classes="text", markup=False)
 
 
 class Welcome(HorizontalGroup):
@@ -121,10 +141,13 @@ class SynthaseApp(App):
         self.draw_status()
 
     def say(self, kind: str, text: str) -> None:
+        self.show(Message(kind, text))
+
+    def show(self, message: Message) -> None:
         """Add a message, following it down unless the user has scrolled up."""
         output = self.query_one("#output")
         following = output.scroll_y >= output.max_scroll_y
-        output.mount(Message(kind, text))
+        output.mount(message)
         extra = len(output.children) - MAX_MESSAGES
         if extra > 0:
             output.remove_children(output.children[:extra])
@@ -145,8 +168,19 @@ class SynthaseApp(App):
             self.say("error", UNKNOWN)
         elif command.name == QUIT:
             self.exit()
+        elif command.name == HELP:
+            self.show_help(text.split()[1:])
         else:
             self.say("error", NOT_YET.format(name=command.name))
+
+    def show_help(self, topic: list[str]) -> None:
+        page = help_page(topic, self.commands)
+        if page.error:
+            self.say("error", page.error)
+            return
+        self.show(HelpMessage(page))
+        if page.hint:
+            self.say("hint", page.hint)
 
     def remember(self, text: str) -> None:
         """Add a command to the history, saying once if the file can't be saved."""
