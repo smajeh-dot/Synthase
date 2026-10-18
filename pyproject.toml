@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "synthase-lab"
-version = "0.0.0"
+version = "0.1.0"
 description = "Deterministic, offline lab calculations and data analysis from the terminal."
 readme = "README.md"
 license = "MIT"
