@@ -24,7 +24,9 @@ from synthase.compounds import (
     compound_batches,
     compound_history,
     compound_spectra,
+    edit_batch,
     edit_compound,
+    get_batch,
     get_compound,
     link_spectrum,
     list_compounds,
@@ -43,6 +45,8 @@ from synthase.compounds import (
     parse_yield,
     purity_warnings,
     read_smiles,
+    remove_batch,
+    unlink_spectrum,
 )
 from synthase.config import Config, ConfigValue
 from synthase.numbers import sig_figs
@@ -740,7 +744,7 @@ def test_version_1_register_is_read_without_change_then_upgraded(tmp_path):
 def test_new_register_has_the_spectrum_kind_column(tmp_path):
     add_compound(tmp_path, "Test compound A")
     columns = [row[1] for row in rows(tmp_path, "PRAGMA table_info(spectra)")]
-    assert columns == ["id", "compound_id", "path", "added", "kind"]
+    assert columns == ["id", "compound_id", "path", "added", "kind", "removed"]
 
 
 @pytest.mark.parametrize(
@@ -921,3 +925,195 @@ def test_version_2_register_upgrades_to_version_3(tmp_path):
     compound = get_compound(tmp_path, "1")
     assert compound.melting_point == MeltingRange(455, 457)
     assert compound_spectra(tmp_path, compound)[0].kind == "IR"
+
+
+# --- Correcting and removing batches and spectra links (#46) ---
+
+
+def three_batches(workspace):
+    """An invented compound with batches of 152 mg, 140 mg and 0.1 g."""
+    add_compound(workspace, "Test compound A")
+    add_batch(workspace, "1", date(2020, 1, 31), 0.152, 64.2)
+    add_batch(workspace, "1", date(2020, 2, 1), 0.140, 50)
+    add_batch(workspace, "1", date(2020, 2, 2), 0.1)
+
+
+def test_correcting_batch_1_mass_asks_and_shows_in_the_history(tmp_path):
+    three_batches(tmp_path)
+    confirm = say(True)
+    _, batch, changes = edit_batch(tmp_path, "1", "1", confirm, mass="125 mg")
+    assert confirm.asked == changes == [Change("batch 1 mass", "152 mg", "125 mg")]
+    assert batch == Batch(1, "2020-01-31", 0.125, 64.2)
+    compound = get_compound(tmp_path, "1")
+    assert compound_batches(tmp_path, compound)[0] == batch
+    logged = compound_history(tmp_path, "1")[1][-1]
+    assert (logged.name, logged.old, logged.new) == ("batch 1 mass", "152 mg", "125 mg")
+
+
+def test_batch_correction_is_refused_without_a_yes(tmp_path):
+    three_batches(tmp_path)
+    _, batch, changes = edit_batch(tmp_path, "1", "1", say(False), mass="125 mg")
+    assert changes == []
+    assert batch.mass_g == 0.152
+    assert get_batch(tmp_path, "1", "1")[1].mass_g == 0.152
+    assert compound_history(tmp_path, "1")[1][-1].name == "batch"
+
+
+def test_batch_date_and_yield_are_corrected_and_a_blank_filled_without_asking(
+    tmp_path,
+):
+    three_batches(tmp_path)
+    confirm = say(True)
+    _, batch, changes = edit_batch(
+        tmp_path, "1", "3", confirm, made_on="1/2/2020", yield_percent="71"
+    )
+    assert confirm.asked == [Change("batch 3 date", "2020-02-02", "2020-02-01")]
+    assert changes == [*confirm.asked, Change("batch 3 yield", None, "71.0%")]
+    assert batch == Batch(3, "2020-02-01", 0.1, 71)
+
+
+def test_unchanged_batch_values_are_not_asked_about(tmp_path):
+    three_batches(tmp_path)
+    confirm = say(True)
+    _, _, changes = edit_batch(
+        tmp_path, "1", "1", confirm, made_on="2020-01-31", mass="0.152 g"
+    )
+    assert confirm.asked == changes == []
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [
+        ({"made_on": "-"}, "A batch always has a date, so it can't be cleared."),
+        ({"mass": "-"}, "A batch needs its mass made, its yield or both."),
+        ({"mass": "152"}, "Give the unit as well"),
+        ({"yield_percent": "-4"}, "can't be below 0%"),
+        (
+            {"made_on": (date.today() + timedelta(days=1)).isoformat()},
+            "is in the future",
+        ),
+    ],
+)
+def test_impossible_batch_correction_saves_nothing(tmp_path, given, message):
+    three_batches(tmp_path)
+    confirm = say(True)
+    with pytest.raises(CompoundError, match=message):
+        edit_batch(tmp_path, "1", "3", confirm, **given)
+    assert confirm.asked == []
+    assert get_batch(tmp_path, "1", "3")[1] == Batch(3, "2020-02-02", 0.1)
+
+
+def test_a_mass_or_yield_can_be_cleared_while_the_other_stays(tmp_path):
+    three_batches(tmp_path)
+    _, batch, changes = edit_batch(tmp_path, "1", "1", say(True), yield_percent="-")
+    assert changes == [Change("batch 1 yield", "64.2%", None)]
+    assert batch == Batch(1, "2020-01-31", 0.152)
+
+
+def test_removing_batch_2_keeps_batch_3_numbered_3(tmp_path):
+    three_batches(tmp_path)
+    _, removed = remove_batch(tmp_path, "1", "2")
+    assert removed == Batch(2, "2020-02-01", 0.14, 50)
+    compound = get_compound(tmp_path, "1")
+    assert [b.number for b in compound_batches(tmp_path, compound)] == [1, 3]
+    assert len(rows(tmp_path, "SELECT * FROM batches")) == 3
+    logged = compound_history(tmp_path, "1")[1][-1]
+    assert (logged.name, logged.old, logged.new) == (
+        "batch",
+        "2: 2020-02-01, 140 mg, 50.0%",
+        "removed",
+    )
+    _, added = add_batch(tmp_path, "1", mass_g=0.2)
+    assert added.number == 4
+    assert [b.number for b in compound_batches(tmp_path, compound)] == [1, 3, 4]
+
+
+def test_a_removed_or_unknown_batch_is_refused(tmp_path):
+    three_batches(tmp_path)
+    remove_batch(tmp_path, "1", "2")
+    today = date.today().isoformat()
+    for action in (
+        lambda: remove_batch(tmp_path, "1", "2"),
+        lambda: edit_batch(tmp_path, "1", "2", say(True), mass="1 g"),
+    ):
+        with pytest.raises(
+            CompoundError, match=f"Batch 2 of SYN-001 was removed on {today}."
+        ):
+            action()
+    with pytest.raises(
+        CompoundError, match="SYN-001 has no batch 4. Its batches are 1 and 3."
+    ):
+        get_batch(tmp_path, "1", "4")
+    with pytest.raises(CompoundError, match='"two" isn\'t a batch number.'):
+        get_batch(tmp_path, "1", "two")
+    add_compound(tmp_path, "Test compound B")
+    with pytest.raises(
+        CompoundError, match="SYN-002 has no batch 1. It has no batches."
+    ):
+        remove_batch(tmp_path, "2", "1")
+
+
+def test_unlinking_hides_the_link_keeps_the_file_and_logs_it(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    file = spectra_file(tmp_path)
+    link_spectrum(tmp_path, "1", file, "IR")
+    _, spectrum = unlink_spectrum(tmp_path, "1", "SPECTRA\\invented ir.csv")
+    assert spectrum.path == "spectra/invented IR.csv"
+    assert file.is_file()
+    assert compound_spectra(tmp_path, get_compound(tmp_path, "1")) == []
+    assert len(rows(tmp_path, "SELECT * FROM spectra")) == 1
+    logged = compound_history(tmp_path, "1")[1][-1]
+    assert (logged.name, logged.old, logged.new) == (
+        "spectrum",
+        "IR spectra/invented IR.csv",
+        "removed",
+    )
+
+
+def test_an_unlinked_file_can_be_linked_again(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    link_spectrum(tmp_path, "1", spectra_file(tmp_path), "ir")
+    unlink_spectrum(tmp_path, "1", "spectra/invented IR.csv")
+    _, again = link_spectrum(tmp_path, "1", spectra_file(tmp_path), "UV-vis")
+    compound = get_compound(tmp_path, "1")
+    assert compound_spectra(tmp_path, compound) == [again]
+    assert again.kind == "UV-vis"
+
+
+def test_a_moved_file_can_still_be_unlinked(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    file = spectra_file(tmp_path)
+    link_spectrum(tmp_path, "1", file)
+    file.unlink()
+    unlink_spectrum(tmp_path, "1", "spectra/invented IR.csv")
+    assert compound_spectra(tmp_path, get_compound(tmp_path, "1")) == []
+
+
+def test_unlinking_a_file_not_linked_is_refused(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    with pytest.raises(CompoundError, match="SYN-001 has no spectra linked."):
+        unlink_spectrum(tmp_path, "1", "spectra/invented IR.csv")
+    link_spectrum(tmp_path, "1", spectra_file(tmp_path))
+    with pytest.raises(CompoundError, match="isn't linked to SYN-001. Its linked"):
+        unlink_spectrum(tmp_path, "1", "spectra/other.csv")
+
+
+def test_version_3_register_upgrades_to_version_4_keeping_batches(tmp_path):
+    with closing(sqlite3.connect(tmp_path / REGISTER_NAME)) as db:
+        db.executescript(
+            compounds.SCHEMA
+            + compounds.DETAILS_SCHEMA
+            + compounds.SPECTRA_SCHEMA
+            + "PRAGMA user_version = 3;"
+        )
+        db.execute("INSERT INTO compounds (label, status) VALUES ('Test A', 'planned')")
+        db.execute(
+            "INSERT INTO batches (compound_id, made_on, mass_g) "
+            "VALUES (1, '2020-01-31', 0.152)"
+        )
+        db.commit()
+    compound = get_compound(tmp_path, "1")
+    assert compound_batches(tmp_path, compound) == [Batch(1, "2020-01-31", 0.152)]
+    remove_batch(tmp_path, "1", "1")
+    assert rows(tmp_path, "PRAGMA user_version") == [(SCHEMA_VERSION,)]
+    assert compound_batches(tmp_path, compound) == []
