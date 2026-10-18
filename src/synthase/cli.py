@@ -4,10 +4,24 @@ import argparse
 import os
 import sys
 from collections.abc import Callable
-from datetime import date
+from functools import partial
 from pathlib import Path
 
 from synthase import __version__
+from synthase.compound_questions import (
+    Answers,
+    Flow,
+    add_flow,
+    batch_flow,
+    change_question,
+    compound_answers,
+    edit_batch_flow,
+    edit_flow,
+    is_yes,
+    kept_message,
+    spectrum_flow,
+    unlink_flow,
+)
 from synthase.compound_text import (
     aligned,
     batch_cells,
@@ -22,26 +36,18 @@ from synthase.compound_text import (
 )
 from synthase.compounds import (
     CLASSES,
-    CLEAR,
     DEFAULT_STATUS,
-    DETAIL_GROUPS,
-    DETAIL_PARSERS,
     DETAILS,
     SPECTRUM_KINDS,
     STATUSES,
     TABLE_HEADINGS,
-    Batch,
     Change,
     Compound,
     CompoundError,
     add_batch,
     add_compound,
     archive_compound,
-    as_text,
-    check_label,
-    check_rf,
     compound_history,
-    compound_spectra,
     edit_batch,
     edit_compound,
     get_batch,
@@ -50,16 +56,9 @@ from synthase.compounds import (
     link_spectrum,
     list_compounds,
     parse_batch_date,
-    parse_batch_value,
-    parse_class,
-    parse_field,
     parse_mass,
-    parse_spectrum_kind,
-    parse_status,
     parse_yield,
-    read_smiles,
     remove_batch,
-    spectra_path,
     table_row,
     unlink_spectrum,
 )
@@ -160,25 +159,6 @@ LABEL_NEEDED = (
 
 # The fields add and edit take, as Compound attributes and option names.
 FIELDS = ("label", "compound_class", "smiles", "status", "notes", *DETAILS)
-
-# What each group of details covers, and the question for each field.
-GROUP_CONTENTS = {
-    "Characterisation": "melting point, Rf",
-    "Handling": "appearance, colour, solubility, DMSO stock, storage",
-    "Safety": "risk assessment, hazards",
-}
-QUESTIONS = {
-    "melting_point": "Melting range in K (e.g. 455-457)",
-    "rf": "Rf (0 to 1)",
-    "rf_solvent": "Rf solvent system (e.g. hexane:ethyl acetate 3:1)",
-    "appearance": "Appearance and colour",
-    "coloured": "Coloured in solution, so it needs a compound-only blank? (yes/no)",
-    "solubility": "Solubility",
-    "dmso_stock": "DMSO stock concentration (mg/mL, µg/mL or mM)",
-    "storage": "Storage conditions",
-    "risk_assessment": "Risk assessment (the date it was done, e.g. 2026-10-18, or no)",
-    "hazards": "Hazard notes",
-}
 
 WORKSPACE_CONTENTS = (
     ("raw", "plate reader exports, exactly as saved"),
@@ -444,7 +424,7 @@ def ask_yes(prompt: str) -> bool:
     except EOFError:
         print()
         return False
-    return reply.strip().lower() in ("y", "yes")
+    return is_yes(reply)
 
 
 def init(path: Path | None) -> int:
@@ -524,8 +504,8 @@ def compound_add(args: argparse.Namespace) -> int:
                 return 1
             compound = add_compound(workspace, **flags)
         else:
-            first, details = ask_compound(workspace)
-            compound = add_compound(workspace, *first, **details)
+            answers = compound_answers(ask_questions(add_flow(workspace)))
+            compound = add_compound(workspace, **answers)
             print()
     except CompoundError as error:
         print(error, file=sys.stderr)
@@ -538,67 +518,22 @@ def compound_add(args: argparse.Namespace) -> int:
     return 0
 
 
-def ask_compound(
-    workspace: Path,
-) -> tuple[tuple[str, str | None, str | None, str, str], dict[str, str | None]]:
-    """Ask for each field of a new compound, until every answer is usable.
+def ask_questions(flow: Flow) -> Answers:
+    """Show the opening lines, then ask each question in ``flow`` that applies.
 
-    Returns the first five answers, then any details by field. Raises
-    EOFError or KeyboardInterrupt if the user stops partway.
+    Each question is asked until its answer is usable. Running out of input
+    at a [y/N] question counts as no. Raises EOFError or KeyboardInterrupt if
+    the user stops partway.
     """
-    print("New compound. Press Enter to skip any question except the label.")
-    label = ask_until("Label: ", lambda text: check_label(workspace, text))
-    compound_class = ask_until(f"Class ({', '.join(CLASSES)}): ", parse_class)
-    smiles = ask_until("SMILES: ", check_smiles)
-    status = ask_until(f"Status [{DEFAULT_STATUS}]: ", parse_status)
-    notes = input("Notes: ")
-    details = ask_details(workspace, None)
-    return (label, compound_class, smiles, status, notes), details
-
-
-def ask_details(workspace: Path, compound: Compound | None) -> dict[str, str | None]:
-    """Ask about each group of details the user wants to fill in.
-
-    ``compound`` is the one being edited, or None for a new one. Returns the
-    answers by field, with None for each one to keep.
-    """
-    verb = "Add" if compound is None else "Edit"
-    answers: dict[str, str | None] = {}
-    for group, fields in DETAIL_GROUPS:
-        contents = GROUP_CONTENTS[group]
-        if not ask_yes(f"{verb} {group.lower()} details ({contents})? [y/N] "):
-            continue
-        for field in fields:
-            current = None if compound is None else getattr(compound, field)
-            if field == "rf_solvent" and compound is None and not answers.get("rf"):
-                continue
-            shown = "" if current is None else f" [{as_text(current)}]"
-
-            def check(
-                text: str, field: str = field, current: object = current
-            ) -> str | None:
-                if not text.strip():
-                    answer = None
-                elif compound is None:
-                    DETAIL_PARSERS[field](text)
-                    answer = text
-                else:
-                    parse_field(workspace, compound.number, field, text)
-                    answer = text
-                if field == "rf_solvent":
-                    old_rf = None if compound is None else compound.rf
-                    check_rf(after(answers.get("rf"), old_rf), after(answer, current))
-                return answer
-
-            answers[field] = ask_until(f"{QUESTIONS[field]}{shown}: ", check)
+    print_lines(list(flow.opening))
+    answers: Answers = {}
+    while (question := flow.next_question(answers)) is not None:
+        if question.yes_no:
+            answers[question.key] = ask_yes(question.prompt)
+        else:
+            check = partial(question.answer, answers=answers)
+            answers[question.key] = ask_until(question.prompt, check)
     return answers
-
-
-def after(answer: str | None, current: object) -> object:
-    """What a field holds after ``answer``: kept, cleared or replaced."""
-    if answer is None:
-        return current
-    return None if answer.strip() == CLEAR else answer
 
 
 def ask_until[T](prompt: str, check: Callable[[str], T]) -> T:
@@ -608,13 +543,6 @@ def ask_until[T](prompt: str, check: Callable[[str], T]) -> T:
             return check(input(prompt))
         except CompoundError as error:
             print(error)
-
-
-def check_smiles(text: str) -> str | None:
-    smiles = text.strip()
-    if smiles:
-        read_smiles(smiles)
-    return smiles or None
 
 
 def compound_show(text: str) -> int:
@@ -664,7 +592,7 @@ def compound_edit(args: argparse.Namespace) -> int:
     flags = {field: getattr(args, field) for field in FIELDS}
     try:
         if all(flag is None for flag in flags.values()):
-            flags = ask_edit(workspace, compound)
+            flags = compound_answers(ask_questions(edit_flow(workspace, compound)))
         compound, changes = edit_compound(workspace, args.id, confirm_change, **flags)
     except CompoundError as error:
         print(error, file=sys.stderr)
@@ -684,50 +612,11 @@ def compound_edit(args: argparse.Namespace) -> int:
     return 0
 
 
-def ask_edit(workspace: Path, compound: Compound) -> dict[str, str | None]:
-    """Ask about each field of ``compound``, showing its current value.
-
-    Returns the answers by field, with None for each field to keep. Raises
-    EOFError or KeyboardInterrupt if the user stops partway.
-    """
-    print(
-        f"Editing {compound.id}: {compound.label}. "
-        "Press Enter to keep a value, or type - to clear it."
-    )
-    answers = []
-    for field, question, current in (
-        ("label", "Label", compound.label),
-        ("class", f"Class ({', '.join(CLASSES)})", compound.compound_class),
-        ("smiles", "SMILES", compound.smiles),
-        ("status", f"Status ({', '.join(STATUSES)})", compound.status),
-        ("notes", "Notes", compound.notes),
-    ):
-        shown = "" if current is None else f" [{current}]"
-
-        def check(text: str, field: str = field) -> str | None:
-            if not text.strip():
-                return None
-            parse_field(workspace, compound.number, field, text)
-            return text
-
-        answers.append(ask_until(f"{question}{shown}: ", check))
-    return dict(zip(FIELDS[:5], answers, strict=True)) | ask_details(
-        workspace, compound
-    )
-
-
 def confirm_change(change: Change) -> bool:
     """Ask before changing or clearing a value that is already set."""
-    # A batch's value, logged as "batch 1 mass", is asked about as "batch 1's mass".
-    batch, _, part = change.name.rpartition(" ")
-    name = f"{batch}'s {part}" if batch.startswith("batch ") else f"the {change.name}"
-    if change.new is None:
-        question = f'Clear {name} ("{change.old}")? [y/N] '
-    else:
-        question = f'Change {name} from "{change.old}" to "{change.new}"? [y/N] '
-    if ask_yes(question):
+    if ask_yes(change_question(change)):
         return True
-    print(f'Kept {name} as "{change.old}".')
+    print(kept_message(change))
     return False
 
 
@@ -835,7 +724,10 @@ def compound_batch(args: argparse.Namespace) -> int:
     flags = (args.date, args.mass, args.yield_percent)
     try:
         if all(flag is None for flag in flags):
-            made_on, mass_g, yield_percent = ask_batch(compound)
+            answers = ask_questions(batch_flow(compound))
+            made_on = answers["made_on"]
+            mass_g = answers["mass_g"]
+            yield_percent = answers["yield_percent"]
         else:
             made_on = parse_batch_date(args.date or "")
             mass_g = None if args.mass is None else parse_mass(args.mass)
@@ -862,32 +754,6 @@ def compound_batch(args: argparse.Namespace) -> int:
     return 0
 
 
-def ask_batch(compound: Compound) -> tuple[date, float | None, float | None]:
-    """Ask for a new batch's date, mass and yield, until each is usable.
-
-    Raises EOFError or KeyboardInterrupt if the user stops partway.
-    """
-    print(
-        f"New batch of {compound.id}: {compound.label}. Press Enter for today's "
-        "date, or to skip the mass or the yield."
-    )
-    made_on = ask_until("Date made (e.g. 2026-10-18): ", parse_batch_date)
-    mass_g = ask_until(
-        "Mass made (e.g. 152 mg): ",
-        lambda text: parse_mass(text) if text.strip() else None,
-    )
-
-    def check_yield(text: str) -> float | None:
-        if text.strip():
-            return parse_yield(text)
-        if mass_g is None:
-            raise CompoundError("A batch needs its mass made, its yield or both.")
-        return None
-
-    yield_percent = ask_until("Yield in % (e.g. 64.2): ", check_yield)
-    return made_on, mass_g, yield_percent
-
-
 def compound_edit_batch(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
@@ -902,7 +768,7 @@ def compound_edit_batch(args: argparse.Namespace) -> int:
     }
     try:
         if all(flag is None for flag in flags.values()):
-            flags = ask_edit_batch(compound, batch)
+            flags = ask_questions(edit_batch_flow(compound, batch))
         compound, batch, changes = edit_batch(
             workspace, args.id, args.batch, confirm_change, **flags
         )
@@ -924,39 +790,6 @@ def compound_edit_batch(args: argparse.Namespace) -> int:
     if batch.warning:
         print(batch.warning)
     return 0
-
-
-def ask_edit_batch(compound: Compound, batch: Batch) -> dict[str, str | None]:
-    """Ask about the batch's date, mass and yield, showing the current values.
-
-    Returns the answers by edit_batch option, with None for each to keep.
-    Raises EOFError or KeyboardInterrupt if the user stops partway.
-    """
-    print(
-        f"Editing batch {batch.number} of {compound.id}: {compound.label}. "
-        "Press Enter to keep a value, or type - to clear the mass or yield."
-    )
-    answers: dict[str, str | None] = {}
-    for option, part, question, current in (
-        ("made_on", "date", "Date made", batch.made_on),
-        ("mass", "mass", "Mass made", batch.mass),
-        ("yield_percent", "yield", "Yield in %", batch.yield_text),
-    ):
-        shown = "" if current is None else f" [{current}]"
-
-        def check(text: str, part: str = part) -> str | None:
-            answer = text if text.strip() else None
-            if answer is not None:
-                parse_batch_value(part, answer)
-            if part == "yield" and (
-                after(answers["mass"], batch.mass_g) is None
-                and after(answer, batch.yield_percent) is None
-            ):
-                raise CompoundError("A batch needs its mass made, its yield or both.")
-            return answer
-
-        answers[option] = ask_until(f"{question}{shown}: ", check)
-    return answers
 
 
 def compound_remove_batch(args: argparse.Namespace) -> int:
@@ -995,7 +828,8 @@ def compound_spectrum(args: argparse.Namespace) -> int:
         return 1
     try:
         if args.file is None and args.kind is None:
-            file, kind = ask_spectrum(workspace, compound)
+            answers = ask_questions(spectrum_flow(workspace, compound))
+            file, kind = answers["file"], answers["kind"]
         elif args.file is None:
             print(
                 f'Give the file to link, as in "syn compound spectrum {compound.id} '
@@ -1018,33 +852,13 @@ def compound_spectrum(args: argparse.Namespace) -> int:
     return 0
 
 
-def ask_spectrum(workspace: Path, compound: Compound) -> tuple[Path, str | None]:
-    """Ask for the file to link and its kind, until each is usable.
-
-    Raises EOFError or KeyboardInterrupt if the user stops partway.
-    """
-    print(f"Link a spectra file to {compound.id}: {compound.label}.")
-
-    def check_file(text: str) -> Path:
-        if not text.strip():
-            raise CompoundError("Type the file's path, or drag the file in.")
-        # A file dragged into PowerShell arrives in quotes.
-        file = Path(text.strip().strip('"'))
-        spectra_path(workspace, file)
-        return file
-
-    file = ask_until("File: ", check_file)
-    kind = ask_until(f"Kind ({', '.join(SPECTRUM_KINDS)}): ", parse_spectrum_kind)
-    return file, kind
-
-
 def compound_unlink(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
         compound = get_compound(workspace, args.id)
         file = args.file
         if file is None:
-            file = ask_linked(workspace, compound)
+            file = ask_questions(unlink_flow(workspace, compound))["file"]
         compound, spectrum = get_spectrum(workspace, args.id, file)
         name = spectrum_name(spectrum)
         question = (
@@ -1063,28 +877,3 @@ def compound_unlink(args: argparse.Namespace) -> int:
         return 1
     print(f"Unlinked {name} from {compound.id}: {compound.label}.")
     return 0
-
-
-def ask_linked(workspace: Path, compound: Compound) -> str:
-    """List the files linked to ``compound``, numbered, and ask which one.
-
-    Returns its path. Raises EOFError or KeyboardInterrupt if the user stops.
-    """
-    linked = compound_spectra(workspace, compound)
-    if not linked:
-        raise CompoundError(f"{compound.id} has no spectra linked.")
-    print(f"Spectra linked to {compound.id}: {compound.label}")
-    rows = [
-        (str(number), *spectrum_cells(spectrum, workspace))
-        for number, spectrum in enumerate(linked, start=1)
-    ]
-    for line in aligned(rows):
-        print(f"  {line}")
-    choices = "1" if len(linked) == 1 else f"1-{len(linked)}"
-
-    def check(text: str) -> str:
-        if text.strip() not in [row[0] for row in rows]:
-            raise CompoundError(f"Type the number of the file to unlink ({choices}).")
-        return linked[int(text) - 1].path
-
-    return ask_until(f"Which one? ({choices}): ", check)
