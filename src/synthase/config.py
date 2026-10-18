@@ -15,6 +15,9 @@ from pathlib import Path
 WORKSPACE_CONFIG_NAME = "config.toml"
 TEMPLATE = files("synthase") / "config_template.toml"
 FIELDS = ("name", "value", "unit", "source", "verified")
+# The [folders] table: where each area's tables are saved (decision 0015).
+FOLDERS_TABLE = "folders"
+FOLDER_AREAS = ("compounds",)
 
 
 class ConfigError(Exception):
@@ -63,8 +66,14 @@ class ConfigValue:
 class Config:
     """The loaded config entries, looked up by key, e.g. ``mic.growth_threshold``."""
 
-    def __init__(self, entries: dict[str, ConfigValue], path: Path | Traversable):
+    def __init__(
+        self,
+        entries: dict[str, ConfigValue],
+        path: Path | Traversable,
+        folders: dict[str, str] | None = None,
+    ):
         self._entries = entries
+        self._folders = folders or {}
         self.path = path
 
     def get(self, key: str) -> ConfigValue:
@@ -79,6 +88,10 @@ class Config:
     def keys(self) -> list[str]:
         return list(self._entries)
 
+    def folder(self, area: str) -> str:
+        """The folder set for ``area`` under [folders], or "" if none is set."""
+        return self._folders.get(area, "")
+
 
 def read_template() -> str:
     """The template's text, for copying into a new workspace."""
@@ -91,14 +104,16 @@ def load_config(workspace: Path | None = None) -> Config:
     Any entry missing from the workspace config is taken from the template, so
     it stays unverified and keeps its warning.
     """
-    entries = _read(TEMPLATE)
+    entries, folders = _read(TEMPLATE)
     path: Path | Traversable = TEMPLATE
     if workspace is not None:
         workspace_file = Path(workspace) / WORKSPACE_CONFIG_NAME
         if workspace_file.is_file():
-            entries.update(_read(workspace_file))
+            workspace_entries, workspace_folders = _read(workspace_file)
+            entries.update(workspace_entries)
+            folders.update(workspace_folders)
             path = workspace_file
-    return Config(entries, path)
+    return Config(entries, path, folders)
 
 
 def _problem(path, where: str, what: str, fix: str = "that entry") -> ConfigError:
@@ -108,7 +123,7 @@ def _problem(path, where: str, what: str, fix: str = "that entry") -> ConfigErro
     )
 
 
-def _read(path: Path | Traversable) -> dict[str, ConfigValue]:
+def _read(path: Path | Traversable) -> tuple[dict[str, ConfigValue], dict[str, str]]:
     try:
         data = tomllib.loads(path.read_bytes().decode("utf-8"))
     except UnicodeDecodeError:
@@ -125,6 +140,7 @@ def _read(path: Path | Traversable) -> dict[str, ConfigValue]:
         ) from None
 
     entries = {}
+    folders = {}
     for area, area_entries in data.items():
         if not isinstance(area_entries, dict):
             raise _problem(
@@ -134,10 +150,34 @@ def _read(path: Path | Traversable) -> dict[str, ConfigValue]:
                 "Put it inside an entry such as [area.entry]",
                 "that line",
             )
+        if area == FOLDERS_TABLE:
+            folders = _folders(path, area_entries)
+            continue
         for entry_name, fields in area_entries.items():
             key = f"{area}.{entry_name}"
             entries[key] = _entry(path, key, fields)
-    return entries
+    return entries, folders
+
+
+def _folders(path, settings: dict) -> dict[str, str]:
+    """The [folders] settings, each a folder path or "" for not set."""
+    for area, folder in settings.items():
+        if area not in FOLDER_AREAS:
+            raise _problem(
+                path,
+                f", [{FOLDERS_TABLE}]",
+                f"unknown folder setting '{area}'. "
+                f"The settings are: {', '.join(FOLDER_AREAS)}",
+                "that line",
+            )
+        if not isinstance(folder, str):
+            raise _problem(
+                path,
+                f", [{FOLDERS_TABLE}]",
+                f"'{area}' must be a folder path in quotes, or \"\" for none",
+                "that line",
+            )
+    return {area: folder.strip() for area, folder in settings.items()}
 
 
 def _entry(path, key: str, fields) -> ConfigValue:

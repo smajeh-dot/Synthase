@@ -153,6 +153,21 @@ def test_template_text_is_readable_for_syn_init():
     assert "[mic.growth_threshold]" in read_template()
 
 
+def test_template_leaves_every_folder_blank():
+    assert load_config().folder("compounds") == ""
+    assert '[folders]\ncompounds = ""\n' in read_template()
+
+
+def test_folder_setting_loads_from_the_workspace(tmp_path):
+    write_config(tmp_path, "[folders]\ncompounds = '  D:\\Invented\\tables  '\n")
+    assert load_config(tmp_path).folder("compounds") == "D:\\Invented\\tables"
+
+
+def test_workspace_config_without_folders_counts_as_not_set(tmp_path):
+    write_config(tmp_path, INVENTED_THRESHOLD.format(verified="true"))
+    assert load_config(tmp_path).folder("compounds") == ""
+
+
 GOOD_ENTRY = """
     name = "invented"
     value = 1
@@ -214,6 +229,19 @@ GOOD_ENTRY = """
                 "value = 1", 'value = [{max = 1, label = "a"}, {max = 4, label = "b"}]'
             ),
             r"last band must have no 'max'",
+        ),
+        (
+            "[folders]\ncompunds = 'tables'\n",
+            r"\[folders\]: unknown folder setting 'compunds'. "
+            r"The settings are: compounds",
+        ),
+        (
+            "[folders]\ncompounds = 3\n",
+            r"\[folders\]: 'compounds' must be a folder path in quotes",
+        ),
+        (
+            "[folders.compounds]\nname = 'tables'\n",
+            r"'compounds' must be a folder path in quotes",
         ),
     ],
 )

@@ -126,3 +126,16 @@ value = "°C"
 unit = ""
 source = "UNVERIFIED placeholder: check against the literature"
 verified = false
+
+# --- Folders ---
+# Where each kind of table is saved (see docs/decisions/0015-table-folders.md).
+# These are folders, not scientific values, so they have no source or verified
+# fields. Leave a setting blank ("") to save in the workspace's results folder.
+#
+# Write a Windows path in single quotes, e.g. compounds = 'D:\Lab\Compound tables'
+# If a folder name has an apostrophe, use double quotes and forward slashes
+# instead, e.g. compounds = "D:/Lab/Sam's tables"
+# A path without a drive letter counts from the workspace folder.
+
+[folders]
+compounds = ""
