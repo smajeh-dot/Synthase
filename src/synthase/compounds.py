@@ -504,7 +504,12 @@ def add_compound(
 
 
 def _check_rf(compound: Compound) -> None:
-    if compound.rf is not None and compound.rf_solvent is None:
+    check_rf(compound.rf, compound.rf_solvent)
+
+
+def check_rf(rf: object, rf_solvent: object) -> None:
+    """Refuse an Rf value without the solvent system it was measured in."""
+    if rf is not None and rf_solvent is None:
         raise CompoundError(
             "An Rf value needs the solvent system it was measured in, "
             'such as "hexane:ethyl acetate 3:1".'

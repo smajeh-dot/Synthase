@@ -9,7 +9,12 @@ from pathlib import Path
 from synthase import __version__
 from synthase.compounds import (
     CLASSES,
+    CLEAR,
     DEFAULT_STATUS,
+    DETAIL_GROUPS,
+    DETAIL_PARSERS,
+    DETAILS,
+    FIELD_NAMES,
     STATUSES,
     TABLE_HEADINGS,
     Change,
@@ -17,7 +22,9 @@ from synthase.compounds import (
     CompoundError,
     add_compound,
     archive_compound,
+    as_text,
     check_label,
+    check_rf,
     compound_history,
     edit_compound,
     get_compound,
@@ -26,6 +33,7 @@ from synthase.compounds import (
     parse_class,
     parse_field,
     parse_status,
+    purity_warnings,
     read_smiles,
     table_row,
 )
@@ -93,6 +101,28 @@ LABEL_NEEDED = (
     'Give the label with --label, or run "syn compound add" with no flags '
     "to be asked for each field."
 )
+
+# The fields add and edit take, as Compound attributes and option names.
+FIELDS = ("label", "compound_class", "smiles", "status", "notes", *DETAILS)
+
+# What each group of details covers, and the question for each field.
+GROUP_CONTENTS = {
+    "Characterisation": "melting point, Rf",
+    "Handling": "appearance, colour, solubility, DMSO stock, storage",
+    "Safety": "risk assessment, hazards",
+}
+QUESTIONS = {
+    "melting_point": "Melting range in K (e.g. 455-457)",
+    "rf": "Rf (0 to 1)",
+    "rf_solvent": "Rf solvent system (e.g. hexane:ethyl acetate 3:1)",
+    "appearance": "Appearance and colour",
+    "coloured": "Coloured in solution, so it needs a compound-only blank? (yes/no)",
+    "solubility": "Solubility",
+    "dmso_stock": "DMSO stock concentration (mg/mL, µg/mL or mM)",
+    "storage": "Storage conditions",
+    "risk_assessment": "Risk assessment (the date it was done, e.g. 2026-10-18, or no)",
+    "hazards": "Hazard notes",
+}
 
 WORKSPACE_CONTENTS = (
     ("raw", "plate reader exports, exactly as saved"),
@@ -209,6 +239,41 @@ def add_field_options(
         help=first_status + ", ".join(STATUSES[1:-1]) + f" or {STATUSES[-1]}",
     )
     parser.add_argument("--notes", help="anything else worth recording" + clears)
+    parser.add_argument(
+        "--mp",
+        dest="melting_point",
+        metavar="RANGE",
+        help="melting range in kelvin, such as 455-457" + clears,
+    )
+    parser.add_argument(
+        "--rf", help="Rf value, from 0 to 1, with --rf-solvent" + clears
+    )
+    parser.add_argument(
+        "--rf-solvent",
+        metavar="SOLVENT",
+        help="the solvent system the Rf was measured in" + clears,
+    )
+    parser.add_argument("--appearance", help="its appearance and colour" + clears)
+    parser.add_argument(
+        "--coloured",
+        metavar="YES/NO",
+        help="coloured in solution, so a plate needs a compound-only blank" + clears,
+    )
+    parser.add_argument("--solubility", help="what it dissolves in" + clears)
+    parser.add_argument(
+        "--dmso-stock",
+        metavar="CONCENTRATION",
+        help="DMSO stock concentration in mg/mL, µg/mL or mM, such as 10 mg/mL"
+        + clears,
+    )
+    parser.add_argument("--storage", help="storage conditions" + clears)
+    parser.add_argument(
+        "--risk-assessment",
+        metavar="DATE/no",
+        help="the date the risk assessment was done, such as 2026-10-18, or no"
+        + clears,
+    )
+    parser.add_argument("--hazards", help="hazard notes" + clears)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -324,15 +389,16 @@ def compound_add(args: argparse.Namespace) -> int:
     except WorkspaceError as error:
         print(error, file=sys.stderr)
         return 1
-    flags = (args.label, args.compound_class, args.smiles, args.status, args.notes)
+    flags = {field: getattr(args, field) for field in FIELDS}
     try:
-        if any(flag is not None for flag in flags):
+        if any(flag is not None for flag in flags.values()):
             if args.label is None:
                 print(LABEL_NEEDED, file=sys.stderr)
                 return 1
-            compound = add_compound(workspace, *flags)
+            compound = add_compound(workspace, **flags)
         else:
-            compound = add_compound(workspace, *ask_compound(workspace))
+            first, details = ask_compound(workspace)
+            compound = add_compound(workspace, *first, **details)
             print()
     except CompoundError as error:
         print(error, file=sys.stderr)
@@ -341,14 +407,17 @@ def compound_add(args: argparse.Namespace) -> int:
         print()
         print("Nothing was added.", file=sys.stderr)
         return 1
-    print_added(compound)
+    print_added(compound, workspace)
     return 0
 
 
-def ask_compound(workspace: Path) -> tuple[str, str | None, str | None, str, str]:
+def ask_compound(
+    workspace: Path,
+) -> tuple[tuple[str, str | None, str | None, str, str], dict[str, str | None]]:
     """Ask for each field of a new compound, until every answer is usable.
 
-    Raises EOFError or KeyboardInterrupt if the user stops partway.
+    Returns the first five answers, then any details by field. Raises
+    EOFError or KeyboardInterrupt if the user stops partway.
     """
     print("New compound. Press Enter to skip any question except the label.")
     label = ask_until("Label: ", lambda text: check_label(workspace, text))
@@ -356,7 +425,53 @@ def ask_compound(workspace: Path) -> tuple[str, str | None, str | None, str, str
     smiles = ask_until("SMILES: ", check_smiles)
     status = ask_until(f"Status [{DEFAULT_STATUS}]: ", parse_status)
     notes = input("Notes: ")
-    return label, compound_class, smiles, status, notes
+    details = ask_details(workspace, None)
+    return (label, compound_class, smiles, status, notes), details
+
+
+def ask_details(workspace: Path, compound: Compound | None) -> dict[str, str | None]:
+    """Ask about each group of details the user wants to fill in.
+
+    ``compound`` is the one being edited, or None for a new one. Returns the
+    answers by field, with None for each one to keep.
+    """
+    verb = "Add" if compound is None else "Edit"
+    answers: dict[str, str | None] = {}
+    for group, fields in DETAIL_GROUPS:
+        contents = GROUP_CONTENTS[group]
+        if not ask_yes(f"{verb} {group.lower()} details ({contents})? [y/N] "):
+            continue
+        for field in fields:
+            current = None if compound is None else getattr(compound, field)
+            if field == "rf_solvent" and compound is None and not answers.get("rf"):
+                continue
+            shown = "" if current is None else f" [{as_text(current)}]"
+
+            def check(
+                text: str, field: str = field, current: object = current
+            ) -> str | None:
+                if not text.strip():
+                    answer = None
+                elif compound is None:
+                    DETAIL_PARSERS[field](text)
+                    answer = text
+                else:
+                    parse_field(workspace, compound.number, field, text)
+                    answer = text
+                if field == "rf_solvent":
+                    old_rf = None if compound is None else compound.rf
+                    check_rf(after(answers.get("rf"), old_rf), after(answer, current))
+                return answer
+
+            answers[field] = ask_until(f"{QUESTIONS[field]}{shown}: ", check)
+    return answers
+
+
+def after(answer: str | None, current: object) -> object:
+    """What a field holds after ``answer``: kept, cleared or replaced."""
+    if answer is None:
+        return current
+    return None if answer.strip() == CLEAR else answer
 
 
 def ask_until[T](prompt: str, check: Callable[[str], T]) -> T:
@@ -377,13 +492,14 @@ def check_smiles(text: str) -> str | None:
 
 def compound_show(text: str) -> int:
     try:
-        compound = get_compound(current_workspace(), text)
+        workspace = current_workspace()
+        compound = get_compound(workspace, text)
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
     archived = " (archived)" if compound.archived else ""
     print(f"{compound.id}: {compound.label}{archived}")
-    print_fields(compound)
+    print_fields(compound, workspace)
     print()
     missing = missing_fields(compound)
     if not missing:
@@ -448,11 +564,11 @@ def compound_edit(args: argparse.Namespace) -> int:
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
-    flags = (args.label, args.compound_class, args.smiles, args.status, args.notes)
+    flags = {field: getattr(args, field) for field in FIELDS}
     try:
-        if all(flag is None for flag in flags):
+        if all(flag is None for flag in flags.values()):
             flags = ask_edit(workspace, compound)
-        compound, changes = edit_compound(workspace, args.id, confirm_change, *flags)
+        compound, changes = edit_compound(workspace, args.id, confirm_change, **flags)
     except CompoundError as error:
         print(error, file=sys.stderr)
         return 1
@@ -467,15 +583,15 @@ def compound_edit(args: argparse.Namespace) -> int:
         f"Saved {len(changes)} change{'' if len(changes) == 1 else 's'} "
         f"to {compound.id}: {compound.label}"
     )
-    print_fields(compound)
+    print_fields(compound, workspace)
     return 0
 
 
-def ask_edit(workspace: Path, compound: Compound) -> tuple[str | None, ...]:
+def ask_edit(workspace: Path, compound: Compound) -> dict[str, str | None]:
     """Ask about each field of ``compound``, showing its current value.
 
-    Returns the answers, with None for each field to keep. Raises EOFError or
-    KeyboardInterrupt if the user stops partway.
+    Returns the answers by field, with None for each field to keep. Raises
+    EOFError or KeyboardInterrupt if the user stops partway.
     """
     print(
         f"Editing {compound.id}: {compound.label}. "
@@ -498,7 +614,9 @@ def ask_edit(workspace: Path, compound: Compound) -> tuple[str | None, ...]:
             return text
 
         answers.append(ask_until(f"{question}{shown}: ", check))
-    return tuple(answers)
+    return dict(zip(FIELDS[:5], answers, strict=True)) | ask_details(
+        workspace, compound
+    )
 
 
 def confirm_change(change: Change) -> bool:
@@ -609,14 +727,17 @@ def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) ->
     return 0
 
 
-def print_added(compound: Compound) -> None:
+def print_added(compound: Compound, workspace: Path) -> None:
     print(f"Added {compound.id}: {compound.label}")
-    print_fields(compound)
+    print_fields(compound, workspace)
     print(f'Add more details later with "syn compound edit {compound.id}".')
 
 
-def print_fields(compound: Compound) -> None:
-    """Print each filled field of ``compound``, one per line."""
+def print_fields(compound: Compound, workspace: Path) -> None:
+    """Print each filled field of ``compound``, one per line, then its details.
+
+    The details come under a heading for each group that has any.
+    """
     molar_mass = (
         None
         if compound.molar_mass is None
@@ -632,3 +753,32 @@ def print_fields(compound: Compound) -> None:
     ):
         if value is not None:
             print(f"  {name:<13}{value}")
+    for group, fields in DETAIL_GROUPS:
+        lines = [
+            f"  {FIELD_NAMES[field]:<20}{detail_text(compound, field)}"
+            for field in fields
+            if getattr(compound, field) is not None
+        ]
+        if group == "Characterisation":
+            lines += [f"  {line}" for line in purity_lines(compound, workspace)]
+        if lines:
+            print(group)
+            print("\n".join(lines))
+
+
+def detail_text(compound: Compound, field: str) -> str | None:
+    if field == "risk_assessment" and compound.risk_assessment != "no":
+        return f"done on {compound.risk_assessment}"
+    if field == "risk_assessment":
+        return "not done"
+    return as_text(getattr(compound, field))
+
+
+def purity_lines(compound: Compound, workspace: Path) -> list[str]:
+    """The purity flag for ``compound``'s melting range, if it has one."""
+    if compound.melting_point is None:
+        return []
+    try:
+        return purity_warnings(compound, load_config(workspace))
+    except ConfigError as error:
+        return [f"The melting range can't be checked against the purity rule. {error}"]

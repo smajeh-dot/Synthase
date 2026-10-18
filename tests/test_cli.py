@@ -140,6 +140,15 @@ ADDED_A = (
 CLASS_PROMPT = "Class (Schiff base, chalcone, starting material, other): "
 PROMPTS = ["Label: ", CLASS_PROMPT, "SMILES: ", "Status [planned]: ", "Notes: "]
 
+# The question before each group of details, after the first five.
+GROUPS = (
+    "characterisation details (melting point, Rf)? [y/N] ",
+    "handling details (appearance, colour, solubility, DMSO stock, storage)? [y/N] ",
+    "safety details (risk assessment, hazards)? [y/N] ",
+)
+ADD_GROUPS = [f"Add {group}" for group in GROUPS]
+EDIT_GROUPS = [f"Edit {group}" for group in GROUPS]
+
 
 @pytest.fixture
 def workspace(tmp_path, capsys):
@@ -184,11 +193,13 @@ def test_prompts_and_flags_give_the_same_entry(tmp_path, capsys, monkeypatch):
     flags_out = capsys.readouterr().out
 
     by_prompts = make_workspace(tmp_path / "prompts", capsys)
-    prompts = answer(monkeypatch, "Test compound A", "Chalcone", "CCO", "", "invented")
+    prompts = answer(
+        monkeypatch, "Test compound A", "Chalcone", "CCO", "", "invented", "", "", ""
+    )
     assert main(["compound", "add"]) == 0
     prompts_out = capsys.readouterr().out
 
-    assert prompts == PROMPTS
+    assert prompts == PROMPTS + ADD_GROUPS
     assert list_compounds(by_prompts) == list_compounds(by_flags)
     assert prompts_out == (
         "New compound. Press Enter to skip any question except the label.\n\n"
@@ -236,6 +247,7 @@ def test_prompts_ask_again_after_each_wrong_answer(workspace, capsys, monkeypatc
         "Status [planned]: ",
         "Status [planned]: ",
         "Notes: ",
+        *ADD_GROUPS,
     ]
     out = capsys.readouterr().out
     for message in (
@@ -673,7 +685,7 @@ def test_edit_prompts_show_current_values_and_fill_a_blank_without_asking(
     add_three(capsys)
     prompts = answer(monkeypatch, "", "", "", "", "invented")
     assert main(["compound", "edit", "SYN-001"]) == 0
-    assert prompts == EDIT_PROMPTS
+    assert prompts == EDIT_PROMPTS + EDIT_GROUPS
     out = capsys.readouterr().out
     assert out.startswith(
         "Editing SYN-001: Test compound A. "
@@ -713,7 +725,8 @@ def test_edit_prompts_ask_again_then_confirm_each_change(
     label, compound_class, smiles, status, notes = EDIT_PROMPTS
     prompts = answer(
         monkeypatch,
-        *["-", "", "", "-", "ketone", "-", "finished", "tested", "", "y", "n"],
+        *["-", "", "", "-", "ketone", "-", "finished", "tested", "", "", "", ""],
+        *["y", "n"],
     )
     assert main(["compound", "edit", "1"]) == 0
     assert prompts == [
@@ -726,6 +739,7 @@ def test_edit_prompts_ask_again_then_confirm_each_change(
         status,
         status,
         notes,
+        *EDIT_GROUPS,
         'Clear the SMILES ("CCO")? [y/N] ',
         'Change the status from "planned" to "tested"? [y/N] ',
     ]
@@ -847,3 +861,167 @@ def test_edit_archive_and_history_help_text(capsys):
         with pytest.raises(SystemExit):
             main(["compound", command, "--help"])
         assert text in " ".join(capsys.readouterr().out.split())
+
+
+# --- Characterisation, handling and safety (#35) ---
+
+DETAIL_FLAGS = [
+    *["--mp", "455-458", "--rf", "0.45", "--rf-solvent", "invented 3:1"],
+    *["--appearance", "invented powder", "--coloured", "yes"],
+    *["--solubility", "invented", "--dmso-stock", "10 ug/mL", "--storage", "dark"],
+    *["--risk-assessment", "31/1/2020", "--hazards", "invented"],
+]
+
+
+def test_add_with_detail_flags_shows_each_group_and_the_purity_flag(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", *DETAIL_FLAGS]
+    assert main(argv) == 0
+    capsys.readouterr()
+    assert main(["compound", "show", "1"]) == 0
+    assert capsys.readouterr().out == (
+        "SYN-001: Test compound A\n"
+        "  status       planned\n"
+        "Characterisation\n"
+        "  melting point       455–458 K\n"
+        "  Rf                  0.45\n"
+        "  Rf solvent system   invented 3:1\n"
+        # The template's placeholder rule: 2 K, unverified.
+        "  ! The melting range is 3 K wide, wider than the melting-point purity "
+        "rule (2 K), so the sample may not be pure.\n"
+        "  Warning: melting-point purity rule (2 K) has not been checked against "
+        "the literature yet. Treat results that use it as provisional.\n"
+        "Handling\n"
+        "  appearance          invented powder\n"
+        "  coloured            yes\n"
+        "  solubility          invented\n"
+        "  DMSO stock          10 µg/mL\n"
+        "  storage conditions  dark\n"
+        "Safety\n"
+        "  risk assessment     done on 2020-01-31\n"
+        "  hazard notes        invented\n"
+        "\n"
+        "Still missing:\n"
+        "  no class yet\n"
+        "  no SMILES yet, so no formula or molar mass\n"
+        "  no notes yet\n"
+    )
+    assert list_compounds(workspace)[0].coloured is True
+
+
+def test_melting_range_as_wide_as_the_rule_is_not_flagged(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", "--mp", "455-457"]
+    assert main(argv) == 0
+    out = capsys.readouterr().out
+    assert "Characterisation\n  melting point       455–457 K\n" in out
+    assert "purity" not in out
+
+
+def test_card_says_when_the_purity_rule_cannot_be_read(workspace, capsys):
+    (workspace / "config.toml").write_text("not a config [", encoding="utf-8")
+    argv = ["compound", "add", "--label", "Test compound A", "--mp", "450-460"]
+    assert main(argv) == 0
+    assert (
+        "  The melting range can't be checked against the purity rule."
+        in capsys.readouterr().out
+    )
+
+
+def test_detail_prompts_ask_again_after_impossible_values(
+    workspace, capsys, monkeypatch
+):
+    prompts = answer(
+        monkeypatch,
+        *["Test compound A", "", "", "", ""],
+        *["y", "458-455", "455-457", "1.3", "0.4", "", "invented 3:1"],
+        *["y", "invented powder", "maybe", "no", "", "10", "10 mM", ""],
+        *["y", "31/02/2026", "no", ""],
+    )
+    assert main(["compound", "add"]) == 0
+    assert prompts[5:] == [
+        ADD_GROUPS[0],
+        "Melting range in K (e.g. 455-457): ",
+        "Melting range in K (e.g. 455-457): ",
+        "Rf (0 to 1): ",
+        "Rf (0 to 1): ",
+        "Rf solvent system (e.g. hexane:ethyl acetate 3:1): ",
+        "Rf solvent system (e.g. hexane:ethyl acetate 3:1): ",
+        ADD_GROUPS[1],
+        "Appearance and colour: ",
+        "Coloured in solution, so it needs a compound-only blank? (yes/no): ",
+        "Coloured in solution, so it needs a compound-only blank? (yes/no): ",
+        "Solubility: ",
+        "DMSO stock concentration (mg/mL, µg/mL or mM): ",
+        "DMSO stock concentration (mg/mL, µg/mL or mM): ",
+        "Storage conditions: ",
+        ADD_GROUPS[2],
+        "Risk assessment (the date it was done, e.g. 2026-10-18, or no): ",
+        "Risk assessment (the date it was done, e.g. 2026-10-18, or no): ",
+        "Hazard notes: ",
+    ]
+    out = capsys.readouterr().out
+    for message in (
+        "The melting range runs from high to low (458 to 455 K).",
+        'An Rf value is between 0 and 1. "1.3" isn\'t.',
+        "An Rf value needs the solvent system it was measured in",
+        'Answer yes or no. "maybe" isn\'t either.',
+        "Give the unit as well, one of mg/mL, µg/mL or mM",
+        '"31/02/2026" isn\'t a real date.',
+    ):
+        assert message in out
+    compound = list_compounds(workspace)[0]
+    assert (str(compound.melting_point), compound.rf, compound.coloured) == (
+        "455–457 K",
+        0.4,
+        False,
+    )
+    assert (str(compound.dmso_stock), compound.risk_assessment) == ("10 mM", "no")
+    assert "  risk assessment     not done yet\n" not in out
+
+
+def test_add_prompts_skip_the_solvent_system_without_an_rf(
+    workspace, capsys, monkeypatch
+):
+    prompts = answer(monkeypatch, "Test compound A", "", "", "", "", "y", "", "")
+    assert main(["compound", "add"]) == 0
+    assert prompts[-3:] == [
+        "Rf (0 to 1): ",
+        ADD_GROUPS[1],
+        ADD_GROUPS[2],
+    ]
+
+
+def test_edit_detail_prompts_show_current_values(workspace, capsys, monkeypatch):
+    argv = ["compound", "add", "--label", "Test compound A", *DETAIL_FLAGS]
+    assert main(argv) == 0
+    capsys.readouterr()
+    prompts = answer(monkeypatch, "", "", "", "", "", "y", "", "-", "-", "", "", "y")
+    assert main(["compound", "edit", "1"]) == 0
+    assert prompts[5:] == [
+        EDIT_GROUPS[0],
+        "Melting range in K (e.g. 455-457) [455–458 K]: ",
+        "Rf (0 to 1) [0.45]: ",
+        "Rf solvent system (e.g. hexane:ethyl acetate 3:1) [invented 3:1]: ",
+        EDIT_GROUPS[1],
+        EDIT_GROUPS[2],
+        'Clear the Rf ("0.45")? [y/N] ',
+        'Clear the Rf solvent system ("invented 3:1")? [y/N] ',
+    ]
+    assert 'Kept the Rf solvent system as "invented 3:1".' in capsys.readouterr().out
+    compound = list_compounds(workspace)[0]
+    assert (compound.rf, compound.rf_solvent) == (None, "invented 3:1")
+
+
+def test_edit_refuses_to_part_an_rf_from_its_solvent_system(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", *DETAIL_FLAGS]
+    assert main(argv) == 0
+    capsys.readouterr()
+    assert main(["compound", "edit", "1", "--rf-solvent", "-"]) == 1
+    assert "needs the solvent system" in capsys.readouterr().err
+    assert list_compounds(workspace)[0].rf_solvent == "invented 3:1"
+
+
+def test_add_with_an_impossible_detail_fails_and_saves_nothing(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", "--rf", "1.3"]
+    assert main(argv) == 1
+    assert 'An Rf value is between 0 and 1. "1.3" isn\'t.' in capsys.readouterr().err
+    assert list_compounds(workspace) == []
