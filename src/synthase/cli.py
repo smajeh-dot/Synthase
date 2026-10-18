@@ -42,9 +42,10 @@ INIT_HELP = (
 )
 
 DOCTOR_HELP = (
-    "Check that Python, RDKit, the workspace and the config are all set up, "
-    "with the fix for anything that isn't, and list every config value not yet "
-    "checked against the literature. Exits with code 1 if any check fails."
+    "Check that Python, RDKit, the workspace, the config and the table folders "
+    "are all set up, with the fix for anything that isn't, and list every config "
+    "value not yet checked against the literature. Exits with code 1 if any check "
+    "fails."
 )
 
 COMPOUND_HELP = "keep track of the project's compounds, from idea to tested"

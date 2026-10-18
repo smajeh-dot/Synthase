@@ -6,7 +6,7 @@ import pytest
 from synthase import doctor
 from synthase.cli import main
 from synthase.config import load_config
-from synthase.workspace import create_workspace
+from synthase.workspace import code_folder, create_workspace
 
 
 def never(prompt):
@@ -26,9 +26,13 @@ def run_doctor(capsys):
 def test_every_check_passing(workspace, capsys):
     code, out = run_doctor(capsys)
     assert code == 0
-    assert out.count("  ok    ") == 4
+    assert out.count("  ok    ") == 5
     assert "FAIL" not in out
     assert f"  ok    Workspace found at {workspace}" in out
+    assert (
+        f"  ok    Compounds folder: not set, tables go in {workspace / 'results'}\n"
+        in out
+    )
     assert "RDKit" in out and "(ethanol, CCO)" in out
     assert out.rstrip().endswith("All checks passed.")
 
@@ -176,3 +180,50 @@ def test_output_saved_in_an_old_windows_character_set_does_not_crash(
     assert "cm?¹" in text
     assert "?0.5 synergy" in text
     assert "All checks passed." in text
+
+
+def set_compounds_folder(workspace, folder):
+    config = workspace / "config.toml"
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace('compounds = ""', f"compounds = '{folder}'"), encoding="utf-8"
+    )
+
+
+def test_compounds_folder_that_exists(workspace, capsys, tmp_path):
+    (tmp_path / "tables").mkdir()
+    set_compounds_folder(workspace, tmp_path / "tables")
+    code, out = run_doctor(capsys)
+    assert code == 0
+    assert f"  ok    Compounds folder: {tmp_path / 'tables'}\n" in out
+
+
+def test_missing_compounds_folder(workspace, capsys, tmp_path):
+    set_compounds_folder(workspace, tmp_path / "not made yet")
+    code, out = run_doctor(capsys)
+    assert code == 1
+    assert (
+        f"  FAIL  Compounds folder {tmp_path / 'not made yet'} doesn't exist\n"
+        '        Fix: create it in File Explorer, or change "compounds" under '
+        "[folders] in config.toml.\n" in out
+    )
+    assert not (tmp_path / "not made yet").exists()
+
+
+def test_compounds_folder_inside_the_code_folder(workspace, capsys):
+    set_compounds_folder(workspace, code_folder())
+    code, out = run_doctor(capsys)
+    assert code == 1
+    assert (
+        f"  FAIL  Compounds folder {code_folder()} is inside Synthase's own code "
+        f"folder ({code_folder()})\n"
+        '        Fix: choose a folder outside it for "compounds" under [folders] '
+        "in config.toml.\n" in out
+    )
+
+
+def test_folders_are_not_checked_until_the_config_is_valid(workspace, capsys):
+    (workspace / "config.toml").write_text("[folders]\ncompounds = 3\n")
+    code, out = run_doctor(capsys)
+    assert code == 1
+    assert "Compounds folder" not in out
