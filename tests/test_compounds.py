@@ -20,7 +20,6 @@ from synthase.compounds import (
     parse_id,
     parse_status,
     read_smiles,
-    table_row,
 )
 from synthase.numbers import sig_figs
 
@@ -298,24 +297,3 @@ def test_missing_fields_names_every_blank_one():
 def test_nothing_missing_once_every_field_is_filled(tmp_path):
     full = add_compound(tmp_path, "Test compound A", "chalcone", "CCO", notes="x")
     assert missing_fields(full) == []
-
-
-def test_table_row_rounds_the_molar_mass_and_leaves_blanks_empty(tmp_path):
-    add_three(tmp_path)
-    first, second = list_compounds(tmp_path)[:2]
-    assert table_row(first) == (
-        "SYN-001",
-        "Test compound A",
-        "chalcone",
-        "purified",
-        "C2H6O",
-        "46.1",
-    )
-    assert table_row(second) == (
-        "SYN-002",
-        "Test compound B",
-        "Schiff base",
-        "planned",
-        None,
-        None,
-    )

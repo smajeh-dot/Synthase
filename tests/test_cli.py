@@ -1,16 +1,15 @@
+import csv
 import shutil
-import sqlite3
 import subprocess
 import sys
 import sysconfig
-from contextlib import closing
 from importlib.metadata import version
 
 import pytest
 
 import synthase
 from synthase.cli import main
-from synthase.compounds import REGISTER_NAME
+from synthase.compounds import REGISTER_NAME, Compound, list_compounds
 from synthase.workspace import code_folder
 
 
@@ -172,14 +171,6 @@ def answer(monkeypatch, *replies):
     return prompts
 
 
-def compound_rows(workspace):
-    with closing(sqlite3.connect(workspace / REGISTER_NAME)) as db:
-        return db.execute(
-            "SELECT id, label, class, smiles, formula, molar_mass, status, notes "
-            "FROM compounds"
-        ).fetchall()
-
-
 def test_compound_add_with_flags_prints_the_new_entry(workspace, capsys):
     argv = ["compound", "add", "--label", "Test compound A", "--class", "chalcone"]
     assert main([*argv, "--smiles", "CCO"]) == 0
@@ -198,7 +189,7 @@ def test_prompts_and_flags_give_the_same_entry(tmp_path, capsys, monkeypatch):
     prompts_out = capsys.readouterr().out
 
     assert prompts == PROMPTS
-    assert compound_rows(by_prompts) == compound_rows(by_flags)
+    assert list_compounds(by_prompts) == list_compounds(by_flags)
     assert prompts_out == (
         "New compound. Press Enter to skip any question except the label.\n\n"
         + flags_out
@@ -214,9 +205,7 @@ def test_prompts_skip_every_blank_answer_but_the_label(workspace, capsys, monkey
         "  status       planned\n"
         'Add more details later with "syn compound edit SYN-001".\n'
     )
-    assert compound_rows(workspace) == [
-        (1, "Test compound A", None, None, None, None, "planned", None)
-    ]
+    assert list_compounds(workspace) == [Compound(1, "Test compound A")]
 
 
 def test_prompts_ask_again_after_each_wrong_answer(workspace, capsys, monkeypatch):
@@ -259,14 +248,15 @@ def test_prompts_ask_again_after_each_wrong_answer(workspace, capsys, monkeypatc
     ):
         assert message in out
     assert "Added SYN-002: Test compound B" in out
-    assert compound_rows(workspace)[1][1:] == (
+    added = list_compounds(workspace)[1]
+    assert added == Compound(
+        2,
         "Test compound B",
         "chalcone",
         "CCO",
         "C2H6O",
         pytest.approx(46.069, abs=0.001),
         "purified",
-        None,
     )
 
 
@@ -289,7 +279,7 @@ def test_flags_with_a_wrong_answer_fail_and_save_nothing(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert message in captured.err
-    assert [row[1] for row in compound_rows(workspace)] == ["Test compound A"]
+    assert [c.label for c in list_compounds(workspace)] == ["Test compound A"]
 
 
 def test_flags_need_a_label(workspace, capsys):
@@ -334,3 +324,182 @@ def test_compound_help_text(capsys):
         "detail; press Enter to skip any but the label. With options, it asks "
         "nothing."
     ) in out
+
+
+# --- syn compound show and list, with invented compounds only ---
+
+
+def add_three(capsys):
+    for flags in (
+        ["--label", "Test compound A", "--class", "chalcone", "--smiles", "CCO"],
+        ["--label", "Test compound B", "--status", "purified"],
+        ["--label", "Test compound C", "--class", "chalcone", "--notes", "invented"],
+    ):
+        assert main(["compound", "add", *flags]) == 0
+    capsys.readouterr()
+
+
+TABLE = (
+    "ID       Label            Class     Status    Formula  Molar mass (g/mol)\n"
+    "SYN-001  Test compound A  chalcone  planned   C2H6O    46.1\n"
+    "SYN-002  Test compound B  -         purified  -        -\n"
+    "SYN-003  Test compound C  chalcone  planned   -        -\n"
+)
+
+
+def test_show_prints_the_card_then_what_is_missing(workspace, capsys):
+    add_three(capsys)
+    assert main(["compound", "show", "syn-1"]) == 0
+    assert capsys.readouterr().out == (
+        "SYN-001: Test compound A\n"
+        "  class        chalcone\n"
+        "  SMILES       CCO\n"
+        "  formula      C2H6O\n"
+        "  molar mass   46.1 g/mol\n"
+        "  status       planned\n"
+        "\n"
+        "Still missing:\n"
+        "  no notes yet\n"
+    )
+    assert main(["compound", "show", "2"]) == 0
+    assert capsys.readouterr().out == (
+        "SYN-002: Test compound B\n"
+        "  status       purified\n"
+        "\n"
+        "Still missing:\n"
+        "  no class yet\n"
+        "  no SMILES yet, so no formula or molar mass\n"
+        "  no notes yet\n"
+    )
+
+
+def test_show_says_when_nothing_is_missing(workspace, capsys):
+    argv = ["compound", "add", "--label", "Test compound A", "--class", "other"]
+    assert main([*argv, "--smiles", "C", "--notes", "invented"]) == 0
+    capsys.readouterr()
+    assert main(["compound", "show", "SYN-001"]) == 0
+    out = capsys.readouterr().out
+    assert "  notes        invented\n" in out
+    assert out.endswith("\nNothing missing.\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("SYN-042", "There's no compound SYN-042 in the register."),
+        ("abc", '"abc" isn\'t a compound ID. IDs look like SYN-001.'),
+    ],
+)
+def test_show_with_an_unknown_id_fails_cleanly(workspace, capsys, text, message):
+    add_three(capsys)
+    assert main(["compound", "show", text]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(message)
+
+
+def test_list_prints_every_compound_and_the_count(workspace, capsys):
+    add_three(capsys)
+    assert main(["compound", "list"]) == 0
+    assert capsys.readouterr().out == TABLE + "3 compounds.\n"
+
+
+@pytest.mark.parametrize(
+    ("filters", "ids", "summary"),
+    [
+        (["--status", "planned"], ["SYN-001", "SYN-003"], "2 of 3 compounds"),
+        (["--class", "Chalcone"], ["SYN-001", "SYN-003"], "2 of 3 compounds"),
+        (["--status", "purified"], ["SYN-002"], "1 of 3 compounds"),
+    ],
+)
+def test_list_filters_keep_the_right_rows(workspace, capsys, filters, ids, summary):
+    add_three(capsys)
+    assert main(["compound", "list", *filters]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines[1:-1]] == ids
+    assert lines[-1].startswith(summary)
+
+
+def test_list_names_the_filters_it_used(workspace, capsys):
+    add_three(capsys)
+    assert main(["compound", "list", "--status", "PLANNED", "--class", "chalcone"]) == 0
+    assert capsys.readouterr().out.endswith(
+        "2 of 3 compounds (status: planned, class: chalcone).\n"
+    )
+    assert main(["compound", "list", "--status", "tested"]) == 0
+    assert capsys.readouterr().out == "No compounds match (status: tested).\n"
+
+
+def test_list_with_an_unknown_filter_fails(workspace, capsys):
+    assert main(["compound", "list", "--class", "ketone"]) == 1
+    assert "isn't a compound class" in capsys.readouterr().err
+
+
+def test_list_and_show_never_create_the_register(workspace, capsys):
+    assert main(["compound", "list", "--csv", str(workspace / "t.csv")]) == 0
+    assert capsys.readouterr().out == (
+        'The register is empty. Add a compound with "syn compound add".\n'
+    )
+    assert main(["compound", "show", "1"]) == 1
+    assert not (workspace / REGISTER_NAME).exists()
+    assert not (workspace / "t.csv").exists()
+
+
+def test_csv_matches_the_table(workspace, capsys, tmp_path):
+    add_three(capsys)
+    saved = tmp_path / "compounds.csv"
+    assert main(["compound", "list", "--csv", str(saved)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(TABLE)
+    assert out.endswith(f"Saved the table to {saved.resolve()}\n")
+    assert saved.read_bytes().startswith(b"\xef\xbb\xbf")
+    with saved.open(encoding="utf-8-sig", newline="") as file:
+        table = list(csv.reader(file))
+    printed = [line.split("  ") for line in TABLE.splitlines()]
+    printed = [[cell.strip() for cell in line if cell.strip()] for line in printed]
+    assert table == [[cell if cell != "-" else "" for cell in r] for r in printed]
+
+
+def test_csv_saves_only_the_filtered_rows(workspace, capsys, tmp_path):
+    add_three(capsys)
+    saved = tmp_path / "purified.csv"
+    assert main(["compound", "list", "--status", "purified", "--csv", str(saved)]) == 0
+    with saved.open(encoding="utf-8-sig", newline="") as file:
+        assert [row[0] for row in csv.reader(file)] == ["ID", "SYN-002"]
+
+
+@pytest.mark.parametrize(("reply", "replaced"), [("y", True), ("", False)])
+def test_csv_asks_before_replacing_a_file(
+    workspace, capsys, monkeypatch, tmp_path, reply, replaced
+):
+    add_three(capsys)
+    saved = tmp_path / "compounds.csv"
+    saved.write_text("invented, keep me\n", encoding="utf-8")
+    prompts = answer(monkeypatch, reply)
+    assert main(["compound", "list", "--csv", str(saved)]) == 0
+    assert prompts == [f"{saved} already exists. Replace it? [y/N] "]
+    out = capsys.readouterr().out
+    if replaced:
+        assert "Saved the table to" in out
+        assert "SYN-003" in saved.read_text(encoding="utf-8-sig")
+    else:
+        assert out.endswith(f"Kept the existing {saved}. The table was not saved.\n")
+        assert saved.read_text(encoding="utf-8") == "invented, keep me\n"
+
+
+def test_csv_that_cannot_be_written_fails_with_a_hint(workspace, capsys, tmp_path):
+    add_three(capsys)
+    assert main(["compound", "list", "--csv", str(tmp_path / "no" / "t.csv")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"Couldn't save {tmp_path / 'no' / 't.csv'}:")
+    assert "If it is open in Excel, close it and try again." in err
+
+
+def test_show_and_list_help_text(capsys):
+    for command, text in (
+        ("show", "Show everything recorded about one compound, and what is still "),
+        ("list", "List every compound in a table. Filter it with --status or "),
+    ):
+        with pytest.raises(SystemExit):
+            main(["compound", command, "--help"])
+        assert text in " ".join(capsys.readouterr().out.split())
