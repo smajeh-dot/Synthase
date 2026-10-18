@@ -1,12 +1,15 @@
 """`syn doctor`: checks the install and the setup, and finds unverified values.
 
-The rules are in docs/decisions/0010-syn-doctor.md.
+The rules are in docs/decisions/0010-syn-doctor.md. The report's words are
+here too, so `syn doctor` and the app's `/doctor` say the same thing.
+Nothing here prints anything.
 """
 
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from synthase import __version__
 from synthase.config import (
     FOLDER_AREAS,
     FOLDERS_TABLE,
@@ -40,6 +43,11 @@ class Check:
     passed: bool
     text: str
     fix: str = ""
+
+    @property
+    def word(self) -> str:
+        """``ok`` or ``FAIL``, the word each check's line starts with."""
+        return "ok" if self.passed else "FAIL"
 
 
 @dataclass(frozen=True)
@@ -148,3 +156,43 @@ def run_checks() -> Report:
     if loaded is not None:
         checks += [check_table_folder(folder, loaded, area) for area in FOLDER_AREAS]
     return Report(checks, loaded)
+
+
+@dataclass(frozen=True)
+class ReportText:
+    """The words of a report, apart from each check's own line.
+
+    ``unverified`` holds a (key, value, source) row for each unverified value.
+    """
+
+    heading: str
+    unverified_title: str
+    unverified: list[tuple[str, str, str]]
+    last: str
+
+
+def report_text(report: Report, rerun: str) -> ReportText:
+    """The report's words. ``rerun`` is how to run doctor again."""
+    unverified = report.unverified()
+    if report.config is None:
+        title = (
+            "The unverified config values can't be listed until the config is fixed."
+        )
+    elif not unverified:
+        title = "Every config value has been verified."
+    else:
+        title = (
+            f"Unverified config values ({len(unverified)}). "
+            "Results that use them show a warning:"
+        )
+    rows = [
+        (entry.key, f"{entry.name}: {entry.describe()}", f"source: {entry.source}")
+        for entry in unverified
+    ]
+    if not report.failed:
+        last = "All checks passed."
+    elif report.failed == 1:
+        last = f"1 check failed. Fix it, then run {rerun} again."
+    else:
+        last = f"{report.failed} checks failed. Fix them, then run {rerun} again."
+    return ReportText(f"Synthase {__version__} self-test", title, rows, last)
