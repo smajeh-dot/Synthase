@@ -8,7 +8,7 @@ from pathlib import Path
 
 from textual.markup import escape
 
-from synthase.config import ConfigError, load_config
+from synthase.config import WORKSPACE_CONFIG_NAME, ConfigError, load_config
 from synthase.workspace import NoWorkspace, WorkspaceMissing, current_workspace
 
 ELLIPSIS = "…"
@@ -28,6 +28,9 @@ def read_status() -> Status:
         return Status("none")
     except WorkspaceMissing:
         return Status("moved")
+    if not (path / WORKSPACE_CONFIG_NAME).is_file():
+        # load_config() would fall back to the template; decision 0010 forbids that.
+        return Status("problem", path)
     try:
         config = load_config(path)
     except ConfigError:
