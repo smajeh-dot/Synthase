@@ -63,7 +63,7 @@ from synthase.compounds import (
     unlink_spectrum,
 )
 from synthase.config import ConfigError, load_config
-from synthase.doctor import run_checks
+from synthase.doctor import report_text, run_checks
 from synthase.tables import TableFolderError, place_table, write_csv
 from synthase.workspace import (
     DEFAULT_NAME,
@@ -456,38 +456,25 @@ def init(path: Path | None) -> int:
 
 def doctor() -> int:
     report = run_checks()
-    print(f"Synthase {__version__} self-test")
+    text = report_text(report, rerun='"syn doctor"')
+    print(text.heading)
     print()
     for check in report.checks:
-        print(f"  {'ok' if check.passed else 'FAIL':<6}{check.text}")
+        print(f"  {check.word:<6}{check.text}")
         if check.fix:
             print(f"        Fix: {check.fix}")
     print()
 
-    unverified = report.unverified()
-    if report.config is None:
-        print("The unverified config values can't be listed until the config is fixed.")
-    elif not unverified:
-        print("Every config value has been verified.")
-    else:
-        print(
-            f"Unverified config values ({len(unverified)}). "
-            "Results that use them show a warning:"
-        )
-        width = max(len(entry.key) for entry in unverified) + 3
-        for entry in unverified:
-            print(f"  {entry.key:<{width}}{entry.name}: {entry.describe()}")
-            print(f"  {'':<{width}}source: {entry.source}")
+    print(text.unverified_title)
+    if text.unverified:
+        width = max(len(key) for key, _, _ in text.unverified) + 3
+        for key, value, source in text.unverified:
+            print(f"  {key:<{width}}{value}")
+            print(f"  {'':<{width}}{source}")
     print()
 
-    if not report.failed:
-        print("All checks passed.")
-        return 0
-    if report.failed == 1:
-        print('1 check failed. Fix it, then run "syn doctor" again.')
-    else:
-        print(f'{report.failed} checks failed. Fix them, then run "syn doctor" again.')
-    return 1
+    print(text.last)
+    return 1 if report.failed else 0
 
 
 def compound_add(args: argparse.Namespace) -> int:
