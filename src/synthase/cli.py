@@ -11,16 +11,22 @@ from synthase.compounds import (
     CLASSES,
     DEFAULT_STATUS,
     STATUSES,
+    TABLE_HEADINGS,
     Compound,
     CompoundError,
     add_compound,
     check_label,
+    get_compound,
+    list_compounds,
+    missing_fields,
     parse_class,
     parse_status,
     read_smiles,
+    table_row,
 )
 from synthase.doctor import run_checks
 from synthase.numbers import sig_figs
+from synthase.tables import write_csv
 from synthase.workspace import (
     DEFAULT_NAME,
     WorkspaceError,
@@ -45,6 +51,15 @@ COMPOUND_HELP = "keep track of the project's compounds, from idea to tested"
 COMPOUND_ADD_HELP = (
     "Add a compound to the register. With no options, Synthase asks for each "
     "detail; press Enter to skip any but the label. With options, it asks nothing."
+)
+
+COMPOUND_SHOW_HELP = (
+    "Show everything recorded about one compound, and what is still missing."
+)
+
+COMPOUND_LIST_HELP = (
+    "List every compound in a table. Filter it with --status or --class, "
+    "and save it with --csv."
 )
 
 LABEL_NEEDED = (
@@ -116,6 +131,27 @@ def build_parser() -> argparse.ArgumentParser:
         + f" or {STATUSES[-1]}",
     )
     add.add_argument("--notes", help="anything else worth recording")
+    show = compound_commands.add_parser(
+        "show",
+        help="show everything recorded about one compound",
+        description=COMPOUND_SHOW_HELP,
+    )
+    show.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    listing = compound_commands.add_parser(
+        "list", help="list every compound in a table", description=COMPOUND_LIST_HELP
+    )
+    listing.add_argument(
+        "--status", help="only compounds with this status: " + ", ".join(STATUSES)
+    )
+    listing.add_argument(
+        "--class",
+        dest="compound_class",
+        metavar="CLASS",
+        help="only compounds of this class: " + ", ".join(CLASSES),
+    )
+    listing.add_argument(
+        "--csv", metavar="FILE", type=Path, help="also save the table as a CSV file"
+    )
     return parser
 
 
@@ -134,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "compound":
         if args.compound_command == "add":
             return compound_add(args)
+        if args.compound_command == "show":
+            return compound_show(args.id)
+        if args.compound_command == "list":
+            return compound_list(args)
         args.compound_parser.print_help()
         return 0
     # With no command, a bare `syn` shows the help text.
@@ -271,8 +311,94 @@ def check_smiles(text: str) -> str | None:
     return smiles or None
 
 
+def compound_show(text: str) -> int:
+    try:
+        compound = get_compound(current_workspace(), text)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(f"{compound.id}: {compound.label}")
+    print_fields(compound)
+    print()
+    missing = missing_fields(compound)
+    if not missing:
+        print("Nothing missing.")
+        return 0
+    print("Still missing:")
+    for item in missing:
+        print(f"  {item}")
+    return 0
+
+
+def compound_list(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        shown = list_compounds(workspace, args.status, args.compound_class)
+        everything = list_compounds(workspace)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    if not everything:
+        print('The register is empty. Add a compound with "syn compound add".')
+        return 0
+    filters = ", ".join(
+        f"{name}: {value}"
+        for name, value in (
+            ("status", None if args.status is None else parse_status(args.status)),
+            ("class", parse_class(args.compound_class or "")),
+        )
+        if value is not None
+    )
+    if not shown:
+        print(f"No compounds match ({filters}).")
+        return 0
+
+    rows = [table_row(compound) for compound in shown]
+    print_table(TABLE_HEADINGS, rows)
+    count = f"{len(everything)} compound{'' if len(everything) == 1 else 's'}"
+    print(f"{len(shown)} of {count} ({filters})." if filters else f"{count}.")
+    return 0 if args.csv is None else save_csv(args.csv, rows)
+
+
+def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -> None:
+    """Print a table in aligned columns, with - in each blank cell."""
+    cells = [headings, *[[cell or "-" for cell in row] for row in rows]]
+    widths = [
+        max(len(line[column]) for line in cells) for column in range(len(headings))
+    ]
+    for line in cells:
+        print(
+            "  ".join(
+                cell.ljust(width) for cell, width in zip(line, widths, strict=True)
+            ).rstrip()
+        )
+
+
+def save_csv(path: Path, rows: list[tuple[str | None, ...]]) -> int:
+    if path.exists() and not ask_yes(f"{path} already exists. Replace it? [y/N] "):
+        print(f"Kept the existing {path}. The table was not saved.")
+        return 0
+    try:
+        write_csv(path, TABLE_HEADINGS, rows)
+    except OSError as error:
+        print(
+            f"Couldn't save {path}: {error.strerror}. "
+            "If it is open in Excel, close it and try again.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"Saved the table to {path.resolve()}")
+    return 0
+
+
 def print_added(compound: Compound) -> None:
     print(f"Added {compound.id}: {compound.label}")
+    print_fields(compound)
+    print(f'Add more details later with "syn compound edit {compound.id}".')
+
+
+def print_fields(compound: Compound) -> None:
+    """Print each filled field of ``compound``, one per line."""
     molar_mass = (
         None
         if compound.molar_mass is None
@@ -288,4 +414,3 @@ def print_added(compound: Compound) -> None:
     ):
         if value is not None:
             print(f"  {name:<13}{value}")
-    print(f'Add more details later with "syn compound edit {compound.id}".')
