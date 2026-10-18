@@ -10,13 +10,14 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
-dependencies = ["rdkit>=2026.9.1"]
+dependencies = ["rdkit>=2026.9.1", "textual>=8.2.8,<9"]
 
 [project.optional-dependencies]
 dev = ["pre-commit", "pytest", "ruff"]
 
 [project.scripts]
 syn = "synthase.cli:main"
+synthase = "synthase.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/synthase"]

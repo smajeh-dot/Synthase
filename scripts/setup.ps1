@@ -13,6 +13,7 @@ $venv = Join-Path $repo '.venv'
 $venvPython = Join-Path $venv 'Scripts\python.exe'
 $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
 $shim = Join-Path $bin 'syn.cmd'
+$appShim = Join-Path $bin 'synthase.cmd'
 
 # Prints the version, the platform (such as win-amd64) and the full path of the
 # Python that runs it.
@@ -116,8 +117,9 @@ if ($pipExit -ne 0) {
 }
 Write-Ok ''
 
-# 4. `syn` on the PATH, through a folder that holds only syn.cmd, so the venv's
-#    own python and pip stay off the PATH.
+# 4. `syn` and `synthase` (the app) on the PATH, through a folder that holds
+#    only syn.cmd and synthase.cmd, so the venv's own python and pip stay off
+#    the PATH.
 Write-Step 'Putting syn on your PATH'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 # cmd reads .cmd files in the console's code page, so a path with accented
@@ -125,6 +127,8 @@ New-Item -ItemType Directory -Force -Path $bin | Out-Null
 $oem = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 $syn = Join-Path $venv 'Scripts\syn.exe'
 [IO.File]::WriteAllText($shim, "@`"$syn`" %*`r`n", $oem)
+$app = Join-Path $venv 'Scripts\synthase.exe'
+[IO.File]::WriteAllText($appShim, "@`"$app`" %*`r`n", $oem)
 
 function Test-OnPath([string]$pathList) {
     foreach ($entry in $pathList -split ';') {
@@ -159,7 +163,7 @@ Write-Host '==> Running syn doctor ...'
 $doctorExit = $LASTEXITCODE
 Write-Host ''
 if ($doctorExit -eq 0) {
-    Write-Host 'Setup finished. Open a new PowerShell window and type "syn" from any folder.'
+    Write-Host 'Setup finished. Open a new PowerShell window and type "synthase" from any folder to open the app, or "syn" for the plain commands.'
 } else {
     Write-Host 'Setup finished, but syn doctor found a problem. Follow its Fix: lines above, then run "syn doctor" again.'
 }

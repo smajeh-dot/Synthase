@@ -26,6 +26,14 @@ class WorkspaceError(Exception):
     """A workspace that can't be created or found, with a message for the user."""
 
 
+class NoWorkspace(WorkspaceError):
+    """`syn init` has never been run, so there is no workspace to find."""
+
+
+class WorkspaceMissing(WorkspaceError):
+    """The remembered workspace folder is no longer there."""
+
+
 @dataclass(frozen=True)
 class Created:
     path: Path
@@ -186,10 +194,10 @@ def current_workspace() -> Path:
     except FileNotFoundError:
         text = ""
     if not text:
-        raise WorkspaceError('There is no workspace yet. Run "syn init" to create one.')
+        raise NoWorkspace('There is no workspace yet. Run "syn init" to create one.')
     path = Path(text)
     if not path.is_dir():
-        raise WorkspaceError(
+        raise WorkspaceMissing(
             f"The workspace at {path} can't be found. If you moved it, run "
             '"syn init" with its new location. Your files and config there '
             "are kept."
