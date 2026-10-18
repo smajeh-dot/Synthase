@@ -766,7 +766,10 @@ def test_unusable_mass_is_refused(text, message):
 
 def test_yield_and_batch_date_are_read():
     assert parse_yield("64.2%") == 64.2
-    assert parse_yield("-3") == -3
+    with pytest.raises(CompoundError, match="can't be below 0%"):
+        parse_yield("-3")
+    with pytest.raises(CompoundError, match="must be above zero"):
+        parse_mass("0 mg")
     with pytest.raises(CompoundError, match="isn't a yield. Type a percentage"):
         parse_yield("good")
     assert parse_batch_date("") == date.today()

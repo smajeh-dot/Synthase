@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 from synthase import __version__
@@ -15,26 +16,38 @@ from synthase.compounds import (
     DETAIL_PARSERS,
     DETAILS,
     FIELD_NAMES,
+    SPECTRUM_KINDS,
     STATUSES,
     TABLE_HEADINGS,
+    Batch,
     Change,
     Compound,
     CompoundError,
+    Spectrum,
+    add_batch,
     add_compound,
     archive_compound,
     as_text,
     check_label,
     check_rf,
+    compound_batches,
     compound_history,
+    compound_spectra,
     edit_compound,
     get_compound,
+    link_spectrum,
     list_compounds,
     missing_fields,
+    parse_batch_date,
     parse_class,
     parse_field,
+    parse_mass,
+    parse_spectrum_kind,
     parse_status,
+    parse_yield,
     purity_warnings,
     read_smiles,
+    spectra_path,
     table_row,
 )
 from synthase.config import ConfigError, load_config
@@ -95,6 +108,18 @@ COMPOUND_RESTORE_HELP = 'Bring an archived compound back into "syn compound list
 COMPOUND_HISTORY_HELP = (
     "Show every change recorded for one compound, oldest first, with the date "
     "and the old and new values."
+)
+
+COMPOUND_BATCH_HELP = (
+    "Add a batch made of a compound: the date, the mass made and the yield. "
+    "With no options, Synthase asks for each; press Enter for today's date, or "
+    "to skip the mass or the yield (but not both)."
+)
+
+COMPOUND_SPECTRUM_HELP = (
+    "Link a spectra file to a compound. The file must be inside the workspace, "
+    'for example in a "spectra" folder. With no file, Synthase asks for it and '
+    "its kind."
 )
 
 LABEL_NEEDED = (
@@ -192,6 +217,33 @@ def build_parser() -> argparse.ArgumentParser:
             name, help=short, description=description
         )
         command.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    batch = compound_commands.add_parser(
+        "batch", help="add a batch made of a compound", description=COMPOUND_BATCH_HELP
+    )
+    batch.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    batch.add_argument(
+        "--date", help="the date it was made, such as 2026-10-18 (default: today)"
+    )
+    batch.add_argument("--mass", help="the mass made, in mg or g, such as 152 mg")
+    batch.add_argument(
+        "--yield",
+        dest="yield_percent",
+        metavar="PERCENT",
+        help="the percentage yield, such as 64.2",
+    )
+    spectrum = compound_commands.add_parser(
+        "spectrum",
+        help="link a spectra file in the workspace to a compound",
+        description=COMPOUND_SPECTRUM_HELP,
+    )
+    spectrum.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    spectrum.add_argument(
+        "file", nargs="?", type=Path, metavar="FILE", help="the file to link"
+    )
+    spectrum.add_argument(
+        "--kind",
+        help=", ".join(SPECTRUM_KINDS[:-1]) + f" or {SPECTRUM_KINDS[-1]}",
+    )
     show = compound_commands.add_parser(
         "show",
         help="show everything recorded about one compound",
@@ -303,6 +355,10 @@ def main(argv: list[str] | None = None) -> int:
             return compound_restore(args.id)
         if args.compound_command == "history":
             return compound_history_command(args.id)
+        if args.compound_command == "batch":
+            return compound_batch(args)
+        if args.compound_command == "spectrum":
+            return compound_spectrum(args)
         args.compound_parser.print_help()
         return 0
     # With no command, a bare `syn` shows the help text.
@@ -500,8 +556,21 @@ def compound_show(text: str) -> int:
     archived = " (archived)" if compound.archived else ""
     print(f"{compound.id}: {compound.label}{archived}")
     print_fields(compound, workspace)
+    batches = compound_batches(workspace, compound)
+    spectra = compound_spectra(workspace, compound)
+    if batches:
+        print("Batches")
+        for line in aligned([batch_cells(batch) for batch in batches]):
+            print(f"  {line}")
+        for batch in batches:
+            if batch.warning:
+                print(f"  ! Batch {batch.number}: {batch.warning}")
+    if spectra:
+        print("Spectra")
+        for line in aligned([spectrum_cells(s, workspace) for s in spectra]):
+            print(f"  {line}")
     print()
-    missing = missing_fields(compound)
+    missing = missing_fields(compound, batches, spectra)
     if not missing:
         print("Nothing missing.")
         return 0
@@ -693,16 +762,22 @@ def compound_history_command(text: str) -> int:
 
 def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -> None:
     """Print a table in aligned columns, with - in each blank cell."""
-    cells = [headings, *[[cell or "-" for cell in row] for row in rows]]
+    for line in aligned([headings, *rows]):
+        print(line)
+
+
+def aligned(rows: list[tuple[str | None, ...]]) -> list[str]:
+    """``rows`` as lines of aligned columns, with - in each blank cell."""
+    cells = [[cell or "-" for cell in row] for row in rows]
     widths = [
-        max(len(line[column]) for line in cells) for column in range(len(headings))
+        max(len(line[column]) for line in cells) for column in range(len(cells[0]))
     ]
-    for line in cells:
-        print(
-            "  ".join(
-                cell.ljust(width) for cell, width in zip(line, widths, strict=True)
-            ).rstrip()
-        )
+    return [
+        "  ".join(
+            cell.ljust(width) for cell, width in zip(line, widths, strict=True)
+        ).rstrip()
+        for line in cells
+    ]
 
 
 def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) -> int:
@@ -782,3 +857,131 @@ def purity_lines(compound: Compound, workspace: Path) -> list[str]:
         return purity_warnings(compound, load_config(workspace))
     except ConfigError as error:
         return [f"The melting range can't be checked against the purity rule. {error}"]
+
+
+def compound_batch(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound = get_compound(workspace, args.id)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    flags = (args.date, args.mass, args.yield_percent)
+    try:
+        if all(flag is None for flag in flags):
+            made_on, mass_g, yield_percent = ask_batch(compound)
+        else:
+            made_on = parse_batch_date(args.date or "")
+            mass_g = None if args.mass is None else parse_mass(args.mass)
+            yield_percent = (
+                None if args.yield_percent is None else parse_yield(args.yield_percent)
+            )
+        compound, batch = add_batch(workspace, args.id, made_on, mass_g, yield_percent)
+    except CompoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Nothing was added.", file=sys.stderr)
+        return 1
+    print(f"Added batch {batch.number} to {compound.id}: {compound.label}")
+    print(f"  {aligned([batch_cells(batch)])[0]}")
+    if batch.warning:
+        print(batch.warning)
+    if compound.status == DEFAULT_STATUS:
+        print(
+            f'{compound.id} is still "{DEFAULT_STATUS}". Change it with '
+            f'"syn compound edit {compound.id} --status synthesised".'
+        )
+    return 0
+
+
+def ask_batch(compound: Compound) -> tuple[date, float | None, float | None]:
+    """Ask for a new batch's date, mass and yield, until each is usable.
+
+    Raises EOFError or KeyboardInterrupt if the user stops partway.
+    """
+    print(
+        f"New batch of {compound.id}: {compound.label}. Press Enter for today's "
+        "date, or to skip the mass or the yield."
+    )
+    made_on = ask_until("Date made (e.g. 2026-10-18): ", parse_batch_date)
+    mass_g = ask_until(
+        "Mass made (e.g. 152 mg): ",
+        lambda text: parse_mass(text) if text.strip() else None,
+    )
+
+    def check_yield(text: str) -> float | None:
+        if text.strip():
+            return parse_yield(text)
+        if mass_g is None:
+            raise CompoundError("A batch needs its mass made, its yield or both.")
+        return None
+
+    yield_percent = ask_until("Yield in % (e.g. 64.2): ", check_yield)
+    return made_on, mass_g, yield_percent
+
+
+def batch_cells(batch: Batch) -> tuple[str | None, ...]:
+    return (str(batch.number), batch.made_on, batch.mass, batch.yield_text)
+
+
+def compound_spectrum(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound = get_compound(workspace, args.id)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    try:
+        if args.file is None and args.kind is None:
+            file, kind = ask_spectrum(workspace, compound)
+        elif args.file is None:
+            print(
+                f'Give the file to link, as in "syn compound spectrum {compound.id} '
+                'spectra\\IR.csv --kind IR".',
+                file=sys.stderr,
+            )
+            return 1
+        else:
+            file, kind = args.file, args.kind
+        compound, spectrum = link_spectrum(workspace, args.id, file, kind)
+    except CompoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Nothing was linked.", file=sys.stderr)
+        return 1
+    print(f"Linked to {compound.id}: {compound.label}")
+    print(f"  {aligned([spectrum_cells(spectrum, workspace)])[0]}")
+    return 0
+
+
+def ask_spectrum(workspace: Path, compound: Compound) -> tuple[Path, str | None]:
+    """Ask for the file to link and its kind, until each is usable.
+
+    Raises EOFError or KeyboardInterrupt if the user stops partway.
+    """
+    print(f"Link a spectra file to {compound.id}: {compound.label}.")
+
+    def check_file(text: str) -> Path:
+        if not text.strip():
+            raise CompoundError("Type the file's path, or drag the file in.")
+        # A file dragged into PowerShell arrives in quotes.
+        file = Path(text.strip().strip('"'))
+        spectra_path(workspace, file)
+        return file
+
+    file = ask_until("File: ", check_file)
+    kind = ask_until(f"Kind ({', '.join(SPECTRUM_KINDS)}): ", parse_spectrum_kind)
+    return file, kind
+
+
+def spectrum_cells(spectrum: Spectrum, workspace: Path) -> tuple[str | None, ...]:
+    found = "" if (workspace / spectrum.path).is_file() else "  (file not found)"
+    return (
+        spectrum.kind,
+        str(Path(spectrum.path)),
+        f"(added {spectrum.added[:10]}){found}",
+    )

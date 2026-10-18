@@ -480,7 +480,19 @@ def parse_mass(text: str) -> float:
         raise CompoundError(f"Give the unit as well, {units}, such as 152 mg.")
     if typed.casefold() not in MASS_UNITS:
         raise CompoundError(f'"{typed}" isn\'t a unit Synthase knows. Use {units}.')
-    return float(number) * MASS_UNITS[typed.casefold()]
+    grams = float(number) * MASS_UNITS[typed.casefold()]
+    _check_mass(grams)
+    return grams
+
+
+def _check_mass(grams: float) -> None:
+    if grams <= 0:
+        raise CompoundError("The mass made must be above zero.")
+
+
+def _check_yield(percent: float) -> None:
+    if percent < 0:
+        raise CompoundError("A yield can't be below 0%.")
 
 
 def parse_yield(text: str) -> float:
@@ -491,7 +503,9 @@ def parse_yield(text: str) -> float:
         raise CompoundError(
             f'"{text}" isn\'t a yield. Type a percentage, such as 64.2.'
         )
-    return float(match.group(1))
+    percent = float(match.group(1))
+    _check_yield(percent)
+    return percent
 
 
 def parse_spectrum_kind(text: str) -> str | None:
@@ -819,10 +833,10 @@ def add_batch(
     _refuse_future(made_on, "the batch was made")
     if mass_g is None and yield_percent is None:
         raise CompoundError("A batch needs its mass made, its yield or both.")
-    if mass_g is not None and mass_g <= 0:
-        raise CompoundError("The mass made must be above zero.")
-    if yield_percent is not None and yield_percent < 0:
-        raise CompoundError("A yield can't be below 0%.")
+    if mass_g is not None:
+        _check_mass(mass_g)
+    if yield_percent is not None:
+        _check_yield(yield_percent)
     with _open(workspace) as db:
         (count,) = db.execute(
             "SELECT COUNT(*) FROM batches WHERE compound_id = ?", (compound.number,)
@@ -859,7 +873,7 @@ def link_spectrum(
     """
     compound = get_compound(workspace, text)
     kind = parse_spectrum_kind(kind or "")
-    path = _spectra_file(workspace, file)
+    path = spectra_path(workspace, file)
     with _open(workspace) as db:
         for (linked,) in db.execute(
             "SELECT path FROM spectra WHERE compound_id = ?", (compound.number,)
@@ -875,8 +889,12 @@ def link_spectrum(
     return compound, spectrum
 
 
-def _spectra_file(workspace: Path, file: Path) -> str:
-    """``file``'s path inside the workspace, with / between folders."""
+def spectra_path(workspace: Path, file: Path) -> str:
+    """``file``'s path inside the workspace, with / between folders.
+
+    A relative ``file`` counts from the current folder, or from the workspace
+    if the current folder has no such file.
+    """
     file = Path(file).expanduser()
     if not file.is_absolute() and not file.exists() and (workspace / file).exists():
         file = workspace / file
