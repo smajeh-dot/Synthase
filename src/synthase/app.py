@@ -12,17 +12,22 @@ from textual.containers import HorizontalGroup, Vertical, VerticalScroll
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
+from synthase.commands import command_list, complete, find
+from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
 from synthase.theme import SYNTHASE
 
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-QUIT = "/quit"
+# For a syn command whose app version hasn't been built yet (#55 to #59).
+NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
+NOT_SAVED = "Command history couldn't be saved: {reason}"
+QUIT = "quit"
 # The output keeps only the latest messages, so a long session stays quick.
 MAX_MESSAGES = 1000
-# Shown in the top rule until the first command. #53 adds "↑ ↓ history".
-FIRST_HINT = " Ctrl+Q quits "
+# Shown in the top rule until the first command.
+FIRST_HINT = " ↑ ↓ history · Tab completes · Ctrl+Q quits "
 # The symbol each kind of message starts with. Colour and weight are in the TCSS.
 GLYPHS = {
     "echo": ">",
@@ -70,6 +75,10 @@ class SynthaseApp(App):
     BINDINGS = [
         Binding("pageup", "scroll_output(-1)", show=False),
         Binding("pagedown", "scroll_output(1)", show=False),
+        Binding("up", "step_history(-1)", show=False),
+        Binding("down", "step_history(1)", show=False),
+        # Before Textual's own Tab, which would move the focus off the bar.
+        Binding("tab", "complete", show=False, priority=True),
     ]
 
     def __init__(self, watch_css: bool = False) -> None:
@@ -78,6 +87,11 @@ class SynthaseApp(App):
         self.register_theme(SYNTHASE)
         self.theme = SYNTHASE.name
         self.status = Status("none")
+        self.commands = command_list()
+        self.history = History(None)
+        self.history_warned = False
+        # The last choices Tab listed, so the same list isn't printed twice in a row.
+        self.listed: tuple[str, ...] = ()
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(Welcome(), id="output")
@@ -90,6 +104,7 @@ class SynthaseApp(App):
     def on_mount(self) -> None:
         self.query_one("#bar").border_title = FIRST_HINT
         self.refresh_status()
+        self.history = History.load(history_file())
         self.query_one("#command").focus()
 
     def refresh_status(self) -> None:
@@ -122,11 +137,44 @@ class SynthaseApp(App):
         if not text:
             return
         self.query_one("#bar").border_title = ""
+        self.listed = ()
         self.say("echo", text)
-        if text.lower() == QUIT:
+        self.remember(text)
+        command = find(text, self.commands)
+        if command is None:
+            self.say("error", UNKNOWN)
+        elif command.name == QUIT:
             self.exit()
-            return
-        self.say("error", UNKNOWN)
+        else:
+            self.say("error", NOT_YET.format(name=command.name))
+
+    def remember(self, text: str) -> None:
+        """Add a command to the history, saying once if the file can't be saved."""
+        try:
+            self.history.add(text)
+        except OSError as error:
+            if not self.history_warned:
+                self.history_warned = True
+                self.say("caution", NOT_SAVED.format(reason=error.strerror or error))
+
+    def set_command(self, text: str) -> None:
+        bar = self.query_one("#command", Input)
+        bar.value = text
+        bar.cursor_position = len(text)
+
+    def action_step_history(self, direction: int) -> None:
+        step = self.history.back() if direction < 0 else self.history.forward()
+        if step is not None:
+            self.set_command(step)
+
+    def action_complete(self) -> None:
+        text = self.query_one("#command", Input).value
+        result = complete(text, self.commands)
+        if result.text != text:
+            self.set_command(result.text)
+        elif result.choices and result.choices != self.listed:
+            self.say("hint", "  ".join(result.choices))
+        self.listed = result.choices
 
     def action_scroll_output(self, direction: int) -> None:
         output = self.query_one("#output")
