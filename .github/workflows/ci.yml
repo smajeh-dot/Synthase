@@ -94,6 +94,9 @@ jobs:
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $userPath
           $found = (Get-Command syn).Source
           if ($found -ne (Join-Path $bin 'syn.cmd')) { throw "syn resolved to $found" }
+          # The app needs a terminal, so CI only checks that it is found.
+          $app = (Get-Command synthase).Source
+          if ($app -ne (Join-Path $bin 'synthase.cmd')) { throw "synthase resolved to $app" }
           syn doctor
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

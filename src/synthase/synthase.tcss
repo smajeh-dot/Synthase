@@ -1,0 +1,99 @@
+/* The app's look. Every colour is a token from theme.py; nothing is styled in
+   Python. Save this file while `textual run --dev synthase.app:SynthaseApp` is
+   running and the open app updates. Design: docs/decisions/0016. */
+
+Screen {
+    background: $background;
+    color: $foreground;
+}
+
+/* Output area */
+#output {
+    height: 1fr;
+    padding: 0 1;
+    background: $background;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $track;
+    scrollbar-background-hover: $track;
+    scrollbar-background-active: $track;
+    scrollbar-color: $thumb;
+    scrollbar-color-hover: $muted;
+    scrollbar-color-active: $foreground;
+}
+
+/* Messages: one widget each. .glyph is the 2-cell symbol column, so wrapped
+   lines hang under the text. */
+.msg { width: 1fr; height: auto; }
+.msg.-reply { padding-left: 2; }
+.msg > .glyph { width: 2; height: auto; }
+.msg > .body { width: 1fr; height: auto; }
+
+.msg.-welcome > .lead { width: auto; color: $echo; text-style: bold; }
+.msg.-welcome > .body { color: $muted; }
+
+.msg.-echo { margin-top: 1; }
+.msg.-echo > .glyph { color: $accent; text-style: bold; }
+.msg.-echo > .body { color: $echo; text-style: bold; }
+
+.msg.-normal > .body { color: $foreground; }
+
+.msg.-success > .glyph { color: $success; text-style: bold; }
+.msg.-success > .body { color: $success; }
+
+.msg.-hint > .glyph, .msg.-hint > .body { color: $muted; }
+.msg.-cancel > .glyph, .msg.-cancel > .body { color: $muted; }
+
+.msg.-caution > .glyph { color: $caution; text-style: bold; }
+.msg.-caution > .body { color: $foreground; }
+
+.msg.-warning > .glyph { color: $warning; text-style: bold; }
+.msg.-warning > .body { color: $foreground; }
+
+.msg.-error > .glyph { color: $error; text-style: bold; }
+.msg.-error > .body { color: $error; }
+
+/* Bottom block: rule, input, rule, then the status line */
+#bottom {
+    dock: bottom;
+    height: 4;
+    background: $background;
+}
+
+#bar {
+    height: 3;
+    padding: 0 1;
+    border-top: solid $rule;
+    border-bottom: solid $rule;
+    border-title-align: right;
+    border-title-color: $muted;
+    border-title-style: none;
+}
+
+#prompt {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+}
+
+#command {
+    width: 1fr;
+    background: $background;
+    color: $echo;
+}
+
+#command:focus {
+    background-tint: $foreground 0%;
+}
+
+#command > .input--placeholder,
+#command > .input--suggestion { color: $faint; }
+#command > .input--cursor { background: $foreground; color: $background; }
+#command > .input--selection { background: $select; }
+
+#status {
+    height: 1;
+    padding: 0 1;
+    color: $status;
+}
