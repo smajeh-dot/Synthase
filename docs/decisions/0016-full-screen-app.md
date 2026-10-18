@@ -64,6 +64,9 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
   - **Plain text.** Every line is shown as plain text, so `[folders]` in a `Fix:` line and characters such as `cm⁻¹` and `≤` show in full.
   - **Afterwards** the status line reads the workspace and config again, so its unverified count is up to date. Words typed after `/doctor` are ignored, as they are after `/quit`.
 
+- **Details settled for #70** (the owner chose the triage defaults, 2026-10-18):
+  - **A missing `config.toml` is a config problem.** When the workspace has no `config.toml`, the status line shows `✗ config.toml has a problem, run /doctor`, the same as a broken one. It never counts the template's values as the workspace's own (decision 0010). `/doctor` names the missing file.
+
 - **Details settled for #56** (the owner chose the triage defaults, 2026-10-18):
   - **Answering mode.** A command asks its questions from the shared question lists (`compound_questions.py`, #51). While a question is open, the top rule becomes heavy and blue with the bold title ` Answering /init · Esc cancels ` on the left. The question wraps on its own rows, in regular weight, just above `> ` and the input. The bar grows to fit them and shrinks back afterwards.
   - **The record.** Each question and its answer are copied into the output as one line, like PowerShell: the question in muted grey, the answer in blue. A wrong answer adds `✗ <reason>` under it, and the same question stays in the bar. Enter is an answer: it skips a question that may be skipped and is explained on one that can't. `[y/N]` questions count only `yes` or `y` as yes.
