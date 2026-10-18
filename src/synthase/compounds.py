@@ -8,9 +8,9 @@ docs/decisions/0014-compound-register.md.
 
 import re
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -58,7 +58,7 @@ CREATE TABLE changes (
 """
 
 # The columns of a Compound, in order.
-COLUMNS = "id, label, class, smiles, formula, molar_mass, status, notes"
+COLUMNS = "id, label, class, smiles, formula, molar_mass, status, notes, archived"
 
 # The table `list` shows and saves as CSV.
 TABLE_HEADINGS = ("ID", "Label", "Class", "Status", "Formula", "Molar mass (g/mol)")
@@ -71,6 +71,19 @@ LOGGED_FIELDS = (
     ("status", "status"),
     ("notes", "notes"),
 )
+
+# How each logged field is named to the user.
+FIELD_NAMES = {
+    "label": "label",
+    "class": "class",
+    "smiles": "SMILES",
+    "status": "status",
+    "notes": "notes",
+    "archived": "archived",
+}
+
+# Typed in place of a value, this clears the field.
+CLEAR = "-"
 
 
 class CompoundError(Exception):
@@ -87,10 +100,25 @@ class Compound:
     molar_mass: float | None = None
     status: str = DEFAULT_STATUS
     notes: str | None = None
+    archived: bool = False
 
     @property
     def id(self) -> str:
         return format_id(self.number)
+
+
+@dataclass(frozen=True)
+class Change:
+    """One field's change, as logged: None stands for a blank value."""
+
+    field: str
+    old: str | None
+    new: str | None
+    changed: str | None = None
+
+    @property
+    def name(self) -> str:
+        return FIELD_NAMES[self.field]
 
 
 def format_id(number: int) -> str:
@@ -162,8 +190,11 @@ def read_smiles(smiles: str) -> tuple[str, float]:
     return rdMolDescriptors.CalcMolFormula(molecule), Descriptors.MolWt(molecule)
 
 
-def check_label(workspace: Path, label: str) -> str:
-    """``label`` without surrounding spaces, if no other compound has it."""
+def check_label(workspace: Path, label: str, number: int | None = None) -> str:
+    """``label`` without surrounding spaces, if no other compound has it.
+
+    ``number`` is the compound being relabelled, which may keep its own label.
+    """
     label = label.strip()
     if not label:
         raise CompoundError("A compound needs a label, such as a short name.")
@@ -171,15 +202,17 @@ def check_label(workspace: Path, label: str) -> str:
     if not register.exists():
         return label
     with _open(workspace) as db:
-        _refuse_repeat(db, label)
+        _refuse_repeat(db, label, number)
     return label
 
 
-def _refuse_repeat(db: sqlite3.Connection, label: str) -> None:
-    for number, existing in db.execute("SELECT id, label FROM compounds"):
-        if _simplify(existing) == _simplify(label):
+def _refuse_repeat(
+    db: sqlite3.Connection, label: str, number: int | None = None
+) -> None:
+    for other, existing in db.execute("SELECT id, label FROM compounds"):
+        if other != number and _simplify(existing) == _simplify(label):
             raise CompoundError(
-                f'"{existing}" is already {format_id(number)}. Choose another label.'
+                f'"{existing}" is already {format_id(other)}. Choose another label.'
             )
 
 
@@ -220,17 +253,149 @@ def add_compound(
             status,
             notes,
         )
-        changed = _now()
-        db.executemany(
-            "INSERT INTO changes (compound_id, changed, field, old, new) "
-            "VALUES (?, ?, ?, NULL, ?)",
+        _log(
+            db,
+            compound.number,
             [
-                (compound.number, changed, column, getattr(compound, attribute))
+                Change(column, None, getattr(compound, attribute))
                 for column, attribute in LOGGED_FIELDS
                 if getattr(compound, attribute) is not None
             ],
         )
     return compound
+
+
+def parse_field(workspace: Path, number: int, field: str, text: str) -> str | None:
+    """The value ``text`` gives ``field`` of compound ``number``.
+
+    ``field`` is a column in LOGGED_FIELDS. CLEAR gives None, which empties
+    the field; label and status can't be emptied.
+    """
+    text = text.strip()
+    if text == CLEAR:
+        if field in ("label", "status"):
+            raise CompoundError(
+                f"A compound always has a {field}, so it can't be cleared."
+            )
+        return None
+    if field == "label":
+        return check_label(workspace, text, number)
+    if field == "class":
+        return parse_class(text)
+    if field == "smiles":
+        read_smiles(text)
+        return text
+    if field == "status":
+        return parse_status(text)
+    return text
+
+
+def edit_compound(
+    workspace: Path,
+    text: str,
+    confirm: Callable[[Change], bool],
+    label: str | None = None,
+    compound_class: str | None = None,
+    smiles: str | None = None,
+    status: str | None = None,
+    notes: str | None = None,
+) -> tuple[Compound, list[Change]]:
+    """Fill in or change fields of compound ``text``, and log it, in one step.
+
+    A field left as None or blank is kept; CLEAR empties it. Every value is
+    checked before anything is asked. Filling a blank field needs nothing
+    more, but changing a set one happens only if ``confirm`` says yes.
+    Returns the compound as saved and the changes made.
+    """
+    compound = get_compound(workspace, text)
+    given = (label, compound_class, smiles, status, notes)
+    wanted = []
+    for (column, attribute), value in zip(LOGGED_FIELDS, given, strict=True):
+        if value is None or not value.strip():
+            continue
+        new = parse_field(workspace, compound.number, column, value)
+        old = getattr(compound, attribute)
+        if new != old:
+            wanted.append(Change(column, old, new))
+    changes = [change for change in wanted if change.old is None or confirm(change)]
+    if not changes:
+        return compound, []
+
+    attributes = dict(LOGGED_FIELDS)
+    updates = {attributes[change.field]: change.new for change in changes}
+    if "smiles" in updates:
+        smiles = updates["smiles"]
+        formula, molar_mass = read_smiles(smiles) if smiles else (None, None)
+        updates.update(formula=formula, molar_mass=molar_mass)
+    compound = replace(compound, **updates)
+    with _open(workspace) as db:
+        _refuse_repeat(db, compound.label, compound.number)
+        db.execute(
+            "UPDATE compounds SET label = ?, class = ?, smiles = ?, formula = ?, "
+            "molar_mass = ?, status = ?, notes = ? WHERE id = ?",
+            (
+                compound.label,
+                compound.compound_class,
+                compound.smiles,
+                compound.formula,
+                compound.molar_mass,
+                compound.status,
+                compound.notes,
+                compound.number,
+            ),
+        )
+        _log(db, compound.number, changes)
+    return compound, changes
+
+
+def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compound:
+    """Hide compound ``text`` from the list, or with archived=False, bring it back.
+
+    Nothing is deleted, and the change is logged.
+    """
+    compound = get_compound(workspace, text)
+    if compound.archived == archived:
+        raise CompoundError(
+            f"{compound.id} is already archived."
+            if archived
+            else f"{compound.id} isn't archived, so there's nothing to restore."
+        )
+    with _open(workspace) as db:
+        db.execute(
+            "UPDATE compounds SET archived = ? WHERE id = ?",
+            (int(archived), compound.number),
+        )
+        _log(
+            db,
+            compound.number,
+            [Change("archived", _yes_no(not archived), _yes_no(archived))],
+        )
+    return replace(compound, archived=archived)
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def compound_history(workspace: Path, text: str) -> tuple[Compound, list[Change]]:
+    """Compound ``text`` and every change logged for it, oldest first."""
+    compound = get_compound(workspace, text)
+    found = _read(
+        workspace,
+        "SELECT field, old, new, changed FROM changes WHERE compound_id = ? "
+        "ORDER BY id",
+        (compound.number,),
+    )
+    return compound, [Change(*row) for row in found]
+
+
+def _log(db: sqlite3.Connection, number: int, changes: list[Change]) -> None:
+    changed = _now()
+    db.executemany(
+        "INSERT INTO changes (compound_id, changed, field, old, new) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [(number, changed, change.field, change.old, change.new) for change in changes],
+    )
 
 
 def get_compound(workspace: Path, text: str) -> Compound:
@@ -242,21 +407,29 @@ def get_compound(workspace: Path, text: str) -> Compound:
             f"There's no compound {format_id(number)} in the register. "
             'Run "syn compound list" to see every ID.'
         )
-    return Compound(*found[0])
+    return _compound(found[0])
+
+
+def _compound(row: tuple) -> Compound:
+    *fields, archived = row
+    return Compound(*fields, archived=bool(archived))
 
 
 def list_compounds(
-    workspace: Path, status: str | None = None, compound_class: str | None = None
+    workspace: Path,
+    status: str | None = None,
+    compound_class: str | None = None,
+    archived: bool = False,
 ) -> list[Compound]:
     """Every compound in ID order, or only those with the status and class given.
 
     Status and class may be given in any form parse_status and parse_class
-    accept.
+    accept. Archived compounds are left out unless ``archived`` is true.
     """
     wanted_status = None if status is None else parse_status(status)
     wanted_class = parse_class(compound_class or "")
     everything = [
-        Compound(*row)
+        _compound(row)
         for row in _read(workspace, f"SELECT {COLUMNS} FROM compounds ORDER BY id")
     ]
     return [
@@ -264,6 +437,7 @@ def list_compounds(
         for compound in everything
         if wanted_status in (None, compound.status)
         and wanted_class in (None, compound.compound_class)
+        and (archived or not compound.archived)
     ]
 
 
@@ -284,7 +458,7 @@ def table_row(compound: Compound) -> tuple[str | None, ...]:
     molar_mass = None if compound.molar_mass is None else sig_figs(compound.molar_mass)
     return (
         compound.id,
-        compound.label,
+        f"{compound.label} (archived)" if compound.archived else compound.label,
         compound.compound_class,
         compound.status,
         compound.formula,
