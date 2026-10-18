@@ -9,7 +9,7 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
 - **Textual** (`textual>=8.2.8,<9`) becomes a run-time dependency, under the rule in decision 0003, because the app needs it. It is pure Python with pure-Python dependencies (Rich and a few small libraries), so it installs on Windows with Python 3.13 with no compiler. Windows CI installs it on every PR.
 - **Opening the app:** typing `synthase` in PowerShell, from any folder, opens it. The setup script puts `synthase.cmd` next to `syn.cmd`. The plain command line (`syn`, `syn compound ...`, `syn doctor`, `syn init`) is unchanged. `/quit` or Ctrl+Q closes the app, and Textual's alternate screen puts the PowerShell prompt back as it was.
 - **Tests:** no new dev dependency. The pilot tests run with `asyncio.run(...)`.
-- **Layout,** from top to bottom: the output area fills the window and scrolls. Then comes the bottom block of 4 rows: a rule, the command bar, a rule, and the status line on its own plain row. That leaves 26 output rows at 120 × 30 and 20 at 80 × 24. There is no header and no footer. The rules are `#767676` with no side borders. A short key hint, `Ctrl+Q quits`, sits in the top rule until the first command (#53 adds `↑ ↓ history` to it).
+- **Layout,** from top to bottom: the output area fills the window and scrolls. Then comes the bottom block of 4 rows: a rule, the command bar, a rule, and the status line on its own plain row. That leaves 26 output rows at 120 × 30 and 20 at 80 × 24. There is no header and no footer. The rules are `#767676` with no side borders. A short key hint, `Ctrl+Q quits`, sits in the top rule until the first command (#53 adds `↑ ↓ history` and `Tab completes` to it).
 - **Commands:** spaces around a command and capitals are ignored. An empty line does nothing. `quit` without the slash is unknown. Each line is echoed as `> what you typed`, with a blank row above, and anything that isn't a command prints `✗ unknown command, try /help`.
 - **Message kinds:** every kind has its own symbol, so no meaning depends on colour alone. The symbols are `>` for echoed input, `✓` success, `›` hint, `!` caution about the sample, `?` for a `Warning:` about an unverified config value, `✗` error, and `‹` cancel. Replies are indented 2 cells, and wrapped lines hang under the text, not the symbol.
 - **Status line:**
@@ -33,12 +33,20 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
 - **Changing the look:** `synthase --dev` reloads the stylesheet each time it is saved, using Textual's own file watcher, so no extra tool is needed.
 - **Output:** new output follows the end unless the user has scrolled up. PgUp and PgDn scroll it. Only the latest 1,000 messages are kept, so a long session stays quick (owner decision). The command palette is switched off.
 - **Settled now for later M2 issues** (owner, 2026-10-18):
-  - Command history is kept between sessions, in a file in the workspace (#53).
+  - Command history is kept between sessions, in a file in the workspace (#53; see "Details settled for #53").
   - Cancelling a question says `‹ Cancelled. Nothing was added.` (#56).
   - In answer mode the rules become heavy and blue, the question is the prompt in regular weight, and the `Answering …` title stays bold (#56).
   - The change log uses `→` in place of `->` (#57).
   - Every date shown on screen is DD/MM/YYYY. Dates inside file names stay YYYY-MM-DD, because Windows forbids `/` in file names (#57 onwards).
   - Success green next to error red is fine, because `✓` and `✗` and their words always tell them apart.
+- **Details settled for #53** (the owner chose the triage defaults, 2026-10-18):
+  - **One command list.** `synthase/commands.py` holds the app's commands: the whole `syn` tree read from `build_parser()` in `cli.py`, plus the commands only the app has (`/quit` now, `/help` from #54). Tab completion walks this list, so a new command or option added to the parser is completed with no extra work. Like `compound_text.py`, the module never prints anything.
+  - **The whole tree completes now.** `/compound …`, `/init` and `/doctor` complete before the app can run them (#55 to #59). Until their issue wires them up, running one prints `✗ /compound isn't in the app yet. For now, run syn compound in PowerShell.` (with the command's own name).
+  - **How Tab works.** Matching ignores capitals, the same way commands do. Tab first extends the text as far as every match agrees (`--r` becomes `--rf`). If that adds nothing and several commands or options still match, one hint line lists them without echoing the command, for example `› --rf  --rf-solvent`. The same list isn't printed twice in a row. The `-h`/`--help` options aren't offered; `/help` is the app's way to get help (#54).
+  - **The key hint** in the top rule, shown until the first command, becomes ` ↑ ↓ history · Tab completes · Ctrl+Q quits `.
+  - **The history file** is `command-history.txt` at the top of the workspace, one command per line, in UTF-8. It keeps the latest 500 commands. A command typed twice in a row is saved once. Mistyped commands are saved too, so they can be brought back and fixed. History can hold compound labels, so it lives in the workspace and never in the repo.
+  - **Up and down.** Up steps back through earlier commands, newest first. Down steps forward again, and Down past the newest empties the bar. A half-typed line is not kept when Up is pressed.
+  - **No workspace, or saving fails.** With no workspace yet, history works for that session only and nothing is saved. If the file can't be written (for example while OneDrive has it locked), the app shows `! Command history couldn't be saved: <reason>` once per session and carries on.
 
 ## Consequences
 - Synthase gains its second run-time dependency. A new Textual major version needs a deliberate upgrade, because the pin stops at 9.
