@@ -487,12 +487,144 @@ def test_csv_asks_before_replacing_a_file(
         assert saved.read_text(encoding="utf-8") == "invented, keep me\n"
 
 
-def test_csv_that_cannot_be_written_fails_with_a_hint(workspace, capsys, tmp_path):
+def test_csv_that_cannot_be_written_fails_with_a_hint(
+    workspace, capsys, monkeypatch, tmp_path
+):
     add_three(capsys)
-    assert main(["compound", "list", "--csv", str(tmp_path / "no" / "t.csv")]) == 1
+
+    def refuse(path, headings, rows):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("synthase.cli.write_csv", refuse)
+    assert main(["compound", "list", "--csv", str(tmp_path / "t.csv")]) == 1
     err = capsys.readouterr().err
-    assert err.startswith(f"Couldn't save {tmp_path / 'no' / 't.csv'}:")
+    assert err.startswith(f"Couldn't save {tmp_path / 't.csv'}: Permission denied.")
     assert "If it is open in Excel, close it and try again." in err
+
+
+def set_compounds_folder(workspace, folder):
+    """Point [folders] compounds in the workspace config at ``folder``."""
+    config = workspace / "config.toml"
+    text = config.read_text(encoding="utf-8")
+    assert 'compounds = ""' in text
+    config.write_text(
+        text.replace('compounds = ""', f"compounds = '{folder}'"), encoding="utf-8"
+    )
+
+
+def save_list(capsys, name):
+    """Run ``syn compound list --csv name``; return the exit code and output."""
+    code = main(["compound", "list", "--csv", str(name)])
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+@pytest.fixture
+def elsewhere(tmp_path, monkeypatch):
+    """Run from a folder of its own, to show nothing is saved there."""
+    folder = tmp_path / "elsewhere"
+    folder.mkdir()
+    monkeypatch.chdir(folder)
+    return folder
+
+
+def test_csv_file_name_goes_in_the_configured_folder(
+    workspace, capsys, tmp_path, elsewhere
+):
+    add_three(capsys)
+    folder = tmp_path / "Compound tables"
+    folder.mkdir()
+    set_compounds_folder(workspace, folder)
+    code, out, _ = save_list(capsys, "compounds.csv")
+    assert code == 0
+    assert out.endswith(f"Saved the table to {(folder / 'compounds.csv').resolve()}\n")
+    assert "SYN-003" in (folder / "compounds.csv").read_text(encoding="utf-8-sig")
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_csv_file_name_goes_in_results_without_a_setting(workspace, capsys, elsewhere):
+    add_three(capsys)
+    assert save_list(capsys, "compounds.csv")[0] == 0
+    assert (workspace / "results" / "compounds.csv").is_file()
+    assert list(elsewhere.iterdir()) == []
+
+
+def test_csv_relative_setting_counts_from_the_workspace(workspace, capsys):
+    add_three(capsys)
+    (workspace / "tables").mkdir()
+    set_compounds_folder(workspace, "tables")
+    assert save_list(capsys, "compounds.csv")[0] == 0
+    assert (workspace / "tables" / "compounds.csv").is_file()
+
+
+def test_csv_full_path_wins_over_the_setting(workspace, capsys, tmp_path):
+    add_three(capsys)
+    (tmp_path / "set").mkdir()
+    set_compounds_folder(workspace, tmp_path / "set")
+    assert save_list(capsys, tmp_path / "chosen.csv")[0] == 0
+    assert (tmp_path / "chosen.csv").is_file()
+    assert list((tmp_path / "set").iterdir()) == []
+
+
+CODE_FOLDER_REFUSAL = "Synthase can't save the table there: "
+
+
+def test_csv_inside_the_code_folder_is_refused(workspace, capsys):
+    add_three(capsys)
+    refused = code_folder() / "refused-by-test.csv"
+    code, _, err = save_list(capsys, refused)
+    assert code == 1
+    assert err.startswith(
+        f"{CODE_FOLDER_REFUSAL}{refused} is inside Synthase's own code folder "
+        f"({code_folder()}). Tables hold your results."
+    )
+    assert (
+        'Choose a folder outside it, or set "compounds" under [folders] in '
+        f"{workspace / 'config.toml'}." in err
+    )
+    assert not refused.exists()
+
+
+def test_csv_setting_inside_the_code_folder_is_refused(workspace, capsys):
+    add_three(capsys)
+    set_compounds_folder(workspace, code_folder())
+    code, _, err = save_list(capsys, "refused-by-test.csv")
+    assert code == 1
+    assert err.startswith(CODE_FOLDER_REFUSAL)
+    assert not (code_folder() / "refused-by-test.csv").exists()
+
+
+def test_csv_missing_configured_folder_fails_cleanly(workspace, capsys, tmp_path):
+    add_three(capsys)
+    missing = tmp_path / "not made yet"
+    set_compounds_folder(workspace, missing)
+    code, _, err = save_list(capsys, "compounds.csv")
+    assert code == 1
+    assert err == (
+        f"Couldn't save the table: the folder {missing} doesn't exist. Create it "
+        'in File Explorer, or change "compounds" under [folders] in '
+        f"{workspace / 'config.toml'}.\n"
+    )
+    assert not missing.exists()
+
+
+def test_csv_missing_folder_in_the_name_fails_cleanly(workspace, capsys, tmp_path):
+    add_three(capsys)
+    code, _, err = save_list(capsys, tmp_path / "no" / "t.csv")
+    assert code == 1
+    assert err == (
+        f"Couldn't save the table: the folder {tmp_path / 'no'} doesn't exist. "
+        "Create it, or choose another folder.\n"
+    )
+
+
+def test_csv_with_a_broken_config_fails_cleanly(workspace, capsys):
+    add_three(capsys)
+    (workspace / "config.toml").write_text("[folders]\ncompunds = ''\n")
+    code, _, err = save_list(capsys, "compounds.csv")
+    assert code == 1
+    assert "unknown folder setting 'compunds'" in err
+    assert not (workspace / "results" / "compounds.csv").exists()
 
 
 def test_show_and_list_help_text(capsys):

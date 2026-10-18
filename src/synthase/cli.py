@@ -24,9 +24,10 @@ from synthase.compounds import (
     read_smiles,
     table_row,
 )
+from synthase.config import ConfigError, load_config
 from synthase.doctor import run_checks
 from synthase.numbers import sig_figs
-from synthase.tables import write_csv
+from synthase.tables import TableFolderError, place_table, write_csv
 from synthase.workspace import (
     DEFAULT_NAME,
     WorkspaceError,
@@ -150,7 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="only compounds of this class: " + ", ".join(CLASSES),
     )
     listing.add_argument(
-        "--csv", metavar="FILE", type=Path, help="also save the table as a CSV file"
+        "--csv",
+        metavar="FILE",
+        type=Path,
+        help="also save the table as a CSV file. A file name alone goes in the "
+        "compounds folder set in config.toml, or in the workspace's results folder",
     )
     return parser
 
@@ -357,7 +362,7 @@ def compound_list(args: argparse.Namespace) -> int:
     print_table(TABLE_HEADINGS, rows)
     count = f"{len(everything)} compound{'' if len(everything) == 1 else 's'}"
     print(f"{len(shown)} of {count} ({filters})." if filters else f"{count}.")
-    return 0 if args.csv is None else save_csv(args.csv, rows)
+    return 0 if args.csv is None else save_csv(args.csv, workspace, rows)
 
 
 def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -> None:
@@ -374,7 +379,12 @@ def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -
         )
 
 
-def save_csv(path: Path, rows: list[tuple[str | None, ...]]) -> int:
+def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) -> int:
+    try:
+        path = place_table(name, workspace, load_config(workspace), "compounds")
+    except (ConfigError, TableFolderError) as error:
+        print(error, file=sys.stderr)
+        return 1
     if path.exists() and not ask_yes(f"{path} already exists. Replace it? [y/N] "):
         print(f"Kept the existing {path}. The table was not saved.")
         return 0
