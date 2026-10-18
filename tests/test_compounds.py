@@ -9,12 +9,18 @@ from synthase import compounds
 from synthase.compounds import (
     REGISTER_NAME,
     SCHEMA_VERSION,
+    Compound,
     CompoundError,
     add_compound,
     check_label,
+    get_compound,
+    list_compounds,
+    missing_fields,
     parse_class,
+    parse_id,
     parse_status,
     read_smiles,
+    table_row,
 )
 from synthase.numbers import sig_figs
 
@@ -199,3 +205,117 @@ def test_file_that_is_not_a_register_is_refused(tmp_path):
     (tmp_path / REGISTER_NAME).write_text("invented, not a database", encoding="utf-8")
     with pytest.raises(CompoundError, match="isn't a compound register"):
         add_compound(tmp_path, "Test compound A")
+
+
+# --- Reading the register (#33) ---
+
+
+def add_three(workspace):
+    add_compound(workspace, "Test compound A", "chalcone", "CCO", "purified")
+    add_compound(workspace, "Test compound B", "Schiff base")
+    add_compound(workspace, "Test compound C", "chalcone", notes="invented")
+
+
+@pytest.mark.parametrize("text", ["SYN-001", "syn-1", " 1 ", "Syn-0001"])
+def test_id_can_be_typed_in_several_forms(text):
+    assert parse_id(text) == 1
+
+
+@pytest.mark.parametrize("text", ["abc", "SYN-", "SYN 1", "-1", "SYN-1a", ""])
+def test_text_that_is_not_an_id_is_refused(text):
+    with pytest.raises(CompoundError, match="isn't a compound ID. IDs look like"):
+        parse_id(text)
+
+
+def test_get_compound_gives_every_saved_field(tmp_path):
+    added = add_compound(tmp_path, "Test compound A", "chalcone", "CCO", notes="x")
+    assert get_compound(tmp_path, "syn-1") == added
+
+
+def test_unknown_id_names_the_id_and_the_list_command(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    with pytest.raises(CompoundError) as error:
+        get_compound(tmp_path, "42")
+    assert str(error.value) == (
+        "There's no compound SYN-042 in the register. "
+        'Run "syn compound list" to see every ID.'
+    )
+
+
+def test_reading_never_creates_the_register(tmp_path):
+    with pytest.raises(CompoundError, match="no compound SYN-001"):
+        get_compound(tmp_path, "SYN-001")
+    assert list_compounds(tmp_path) == []
+    assert not (tmp_path / REGISTER_NAME).exists()
+
+
+def test_list_gives_every_compound_in_id_order(tmp_path):
+    add_three(tmp_path)
+    assert [c.id for c in list_compounds(tmp_path)] == ["SYN-001", "SYN-002", "SYN-003"]
+
+
+@pytest.mark.parametrize(
+    ("status", "compound_class", "labels"),
+    [
+        ("planned", None, ["Test compound B", "Test compound C"]),
+        ("PURIFIED", None, ["Test compound A"]),
+        (None, "chalcone", ["Test compound A", "Test compound C"]),
+        (None, "schiff-base", ["Test compound B"]),
+        ("planned", "Chalcone", ["Test compound C"]),
+        ("tested", None, []),
+    ],
+)
+def test_each_filter_keeps_the_right_rows(tmp_path, status, compound_class, labels):
+    add_three(tmp_path)
+    found = list_compounds(tmp_path, status, compound_class)
+    assert [compound.label for compound in found] == labels
+
+
+@pytest.mark.parametrize(
+    ("status", "compound_class", "message"),
+    [("finished", None, "isn't a status"), (None, "ketone", "isn't a compound class")],
+)
+def test_unknown_filter_value_is_refused(tmp_path, status, compound_class, message):
+    with pytest.raises(CompoundError, match=message):
+        list_compounds(tmp_path, status, compound_class)
+
+
+def test_reading_a_register_from_a_newer_synthase_is_refused(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    rows(tmp_path, f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    with pytest.raises(CompoundError, match="newer version of Synthase"):
+        list_compounds(tmp_path)
+
+
+def test_missing_fields_names_every_blank_one():
+    assert missing_fields(Compound(1, "Test compound A")) == [
+        "no class yet",
+        "no SMILES yet, so no formula or molar mass",
+        "no notes yet",
+    ]
+
+
+def test_nothing_missing_once_every_field_is_filled(tmp_path):
+    full = add_compound(tmp_path, "Test compound A", "chalcone", "CCO", notes="x")
+    assert missing_fields(full) == []
+
+
+def test_table_row_rounds_the_molar_mass_and_leaves_blanks_empty(tmp_path):
+    add_three(tmp_path)
+    first, second = list_compounds(tmp_path)[:2]
+    assert table_row(first) == (
+        "SYN-001",
+        "Test compound A",
+        "chalcone",
+        "purified",
+        "C2H6O",
+        "46.1",
+    )
+    assert table_row(second) == (
+        "SYN-002",
+        "Test compound B",
+        "Schiff base",
+        "planned",
+        None,
+        None,
+    )

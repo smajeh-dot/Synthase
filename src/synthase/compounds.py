@@ -6,12 +6,15 @@ asks anything; the command line and the app do that. The rules are in
 docs/decisions/0014-compound-register.md.
 """
 
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+from synthase.numbers import sig_figs
 
 REGISTER_NAME = "compounds.sqlite"
 SCHEMA_VERSION = 1
@@ -54,6 +57,12 @@ CREATE TABLE changes (
 );
 """
 
+# The columns of a Compound, in order.
+COLUMNS = "id, label, class, smiles, formula, molar_mass, status, notes"
+
+# The table `list` shows and saves as CSV.
+TABLE_HEADINGS = ("ID", "Label", "Class", "Status", "Formula", "Molar mass (g/mol)")
+
 # The fields logged in the change log, as (column, Compound attribute).
 LOGGED_FIELDS = (
     ("label", "label"),
@@ -86,6 +95,16 @@ class Compound:
 
 def format_id(number: int) -> str:
     return f"SYN-{number:03d}"
+
+
+def parse_id(text: str) -> int:
+    """The number in a compound ID, given as SYN-001, syn-1 or plain 1."""
+    match = re.fullmatch(r"(?:syn-)?(\d+)", text.strip(), re.IGNORECASE)
+    if match is None:
+        raise CompoundError(
+            f'"{text.strip()}" isn\'t a compound ID. IDs look like SYN-001.'
+        )
+    return int(match.group(1))
 
 
 def _choice(text: str, choices: tuple[str, ...], what: str) -> str | None:
@@ -214,6 +233,65 @@ def add_compound(
     return compound
 
 
+def get_compound(workspace: Path, text: str) -> Compound:
+    """The compound whose ID is ``text``, in any form parse_id accepts."""
+    number = parse_id(text)
+    found = _read(workspace, f"SELECT {COLUMNS} FROM compounds WHERE id = ?", (number,))
+    if not found:
+        raise CompoundError(
+            f"There's no compound {format_id(number)} in the register. "
+            'Run "syn compound list" to see every ID.'
+        )
+    return Compound(*found[0])
+
+
+def list_compounds(
+    workspace: Path, status: str | None = None, compound_class: str | None = None
+) -> list[Compound]:
+    """Every compound in ID order, or only those with the status and class given.
+
+    Status and class may be given in any form parse_status and parse_class
+    accept.
+    """
+    wanted_status = None if status is None else parse_status(status)
+    wanted_class = parse_class(compound_class or "")
+    everything = [
+        Compound(*row)
+        for row in _read(workspace, f"SELECT {COLUMNS} FROM compounds ORDER BY id")
+    ]
+    return [
+        compound
+        for compound in everything
+        if wanted_status in (None, compound.status)
+        and wanted_class in (None, compound.compound_class)
+    ]
+
+
+def missing_fields(compound: Compound) -> list[str]:
+    """What is still blank in ``compound``, one plain sentence each."""
+    missing = []
+    if compound.compound_class is None:
+        missing.append("no class yet")
+    if compound.smiles is None:
+        missing.append("no SMILES yet, so no formula or molar mass")
+    if compound.notes is None:
+        missing.append("no notes yet")
+    return missing
+
+
+def table_row(compound: Compound) -> tuple[str | None, ...]:
+    """``compound``'s row under TABLE_HEADINGS, with None for a blank cell."""
+    molar_mass = None if compound.molar_mass is None else sig_figs(compound.molar_mass)
+    return (
+        compound.id,
+        compound.label,
+        compound.compound_class,
+        compound.status,
+        compound.formula,
+        molar_mass,
+    )
+
+
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -227,18 +305,7 @@ def _open(workspace: Path) -> Iterator[sqlite3.Connection]:
     path = workspace / REGISTER_NAME
     # isolation_level=None: transactions start only where BEGIN says.
     with closing(sqlite3.connect(path, isolation_level=None)) as db:
-        try:
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-        except sqlite3.DatabaseError:
-            raise CompoundError(
-                f"{path} isn't a compound register Synthase can read. "
-                "If you replaced it, put the original back from a backup."
-            ) from None
-        if version > SCHEMA_VERSION:
-            raise CompoundError(
-                f"{path} was made by a newer version of Synthase. "
-                "Update Synthase, then try again."
-            )
+        version = _version(db, path)
         db.execute("PRAGMA foreign_keys = ON")
         if version == 0:
             db.executescript(
@@ -251,3 +318,37 @@ def _open(workspace: Path) -> Iterator[sqlite3.Connection]:
             db.rollback()
             raise
         db.commit()
+
+
+def _read(
+    workspace: Path, sql: str, parameters: tuple[object, ...] = ()
+) -> list[tuple]:
+    """The rows ``sql`` selects from the register, opened read-only.
+
+    A register that doesn't exist yet has no rows, and isn't created.
+    """
+    path = workspace / REGISTER_NAME
+    if not path.exists():
+        return []
+    uri = path.resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as db:
+        if _version(db, path) == 0:
+            return []
+        return db.execute(sql, parameters).fetchall()
+
+
+def _version(db: sqlite3.Connection, path: Path) -> int:
+    """The register's schema version, if this Synthase can use it."""
+    try:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+    except sqlite3.DatabaseError:
+        raise CompoundError(
+            f"{path} isn't a compound register Synthase can read. "
+            "If you replaced it, put the original back from a backup."
+        ) from None
+    if version > SCHEMA_VERSION:
+        raise CompoundError(
+            f"{path} was made by a newer version of Synthase. "
+            "Update Synthase, then try again."
+        )
+    return version
