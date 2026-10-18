@@ -58,7 +58,7 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
 
 - **Details settled for #55** (the owner chose the triage defaults, 2026-10-18):
   - **One source for the words.** `doctor.py` holds the report's wording: the heading, the `ok` and `FAIL` words, the unverified list and the last line. `syn doctor` prints it and `/doctor` shows it, so the two can't drift apart. Like `compound_text.py`, it never prints anything. `syn doctor` prints exactly what it printed before.
-  - **The last line says `/doctor`.** In the app it ends `Fix them, then run /doctor again.` Every other line is word for word the same as `syn doctor`. The `Fix:` lines keep `syn init` until `/init` is in the app (#59).
+  - **The last line says `/doctor`.** In the app it ends `Fix them, then run /doctor again.` Every other line is word for word the same as `syn doctor`. The `Fix:` lines keep `syn init` until `/init` is in the app (#56).
   - **The heading stays:** `Synthase 0.1.0 self-test`, in bold heading white.
   - **The look.** Each check line starts with its word, so the meaning never depends on colour: `ok` in bold success green, or `FAIL` in bold error red with the line's text red too. A `Fix:` line is normal text, under the check's text. Words and text sit in two columns, so a long path wraps under its own column. The unverified list's title starts with the warning `?` (or `✓` when every value is verified), with the keys in muted grey and each value's source on the row below. The last line is `✓ All checks passed.` in green, or the `✗` failure line in red. A blank row separates the parts. No new colour.
   - **Plain text.** Every line is shown as plain text, so `[folders]` in a `Fix:` line and characters such as `cm⁻¹` and `≤` show in full.

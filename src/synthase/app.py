@@ -13,6 +13,7 @@ from textual.widgets import Input, Label, Static
 
 from synthase import __version__
 from synthase.commands import HELP, HelpPage, command_list, complete, find, help_page
+from synthase.doctor import Check, ReportText, report_text, run_checks
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
 from synthase.theme import SYNTHASE
@@ -20,10 +21,11 @@ from synthase.theme import SYNTHASE
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#55 to #59).
+# For a syn command whose app version hasn't been built yet (#56 to #59).
 NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
+DOCTOR = "doctor"
 # The output keeps only the latest messages, so a long session stays quick.
 MAX_MESSAGES = 1000
 # Shown in the top rule until the first command.
@@ -74,6 +76,57 @@ class HelpMessage(Message):
                     for name, text in self.page.rows:
                         yield Label(name, classes="name", markup=False)
                         yield Static(text, classes="text", markup=False)
+
+
+class DoctorChecks(Message):
+    """The /doctor heading, then each check's word and text in two columns."""
+
+    def __init__(self, heading: str, checks: list[Check]) -> None:
+        lines = [heading, ""]
+        for check in checks:
+            lines.append(f"{check.word:<6}{check.text}")
+            if check.fix:
+                lines.append(f"      Fix: {check.fix}")
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-doctor")
+        self.heading = heading
+        self.checks = checks
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.heading, classes="heading", markup=False)
+            with Grid(classes="rows"):
+                for check in self.checks:
+                    kind = "-ok" if check.passed else "-fail"
+                    yield Label(check.word, classes=f"word {kind}", markup=False)
+                    yield Static(check.text, classes=f"text {kind}", markup=False)
+                    if check.fix:
+                        yield Label("", classes="word")
+                        yield Static(f"Fix: {check.fix}", classes="fix", markup=False)
+
+
+class UnverifiedValues(Message):
+    """The /doctor list of unverified values: its title, then key, value and source."""
+
+    def __init__(self, text: ReportText, verified: bool) -> None:
+        rows = [f"{key}  {value}\n{source}" for key, value, source in text.unverified]
+        kind = "success" if verified else "warning"
+        super().__init__(kind, "\n".join([text.unverified_title, *rows]))
+        self.add_class("-unverified")
+        self.heading = text.unverified_title
+        self.rows = text.unverified
+
+    def compose(self) -> ComposeResult:
+        yield Label(GLYPHS[self.kind], classes="glyph", markup=False)
+        with Vertical(classes="body"):
+            yield Static(self.heading, classes="heading", markup=False)
+            if self.rows:
+                with Grid(classes="rows"):
+                    for key, value, source in self.rows:
+                        yield Label(key, classes="key", markup=False)
+                        yield Static(value, classes="value", markup=False)
+                        yield Label("", classes="key")
+                        yield Static(source, classes="value", markup=False)
 
 
 class Welcome(HorizontalGroup):
@@ -170,6 +223,8 @@ class SynthaseApp(App):
             self.exit()
         elif command.name == HELP:
             self.show_help(text.split()[1:])
+        elif command.name == DOCTOR:
+            self.run_doctor()
         else:
             self.say("error", NOT_YET.format(name=command.name))
 
@@ -181,6 +236,18 @@ class SynthaseApp(App):
         self.show(HelpMessage(page))
         if page.hint:
             self.say("hint", page.hint)
+
+    def run_doctor(self) -> None:
+        """The self-test, worded as syn doctor words it (decisions 0010 and 0016)."""
+        report = run_checks()
+        text = report_text(report, rerun="/doctor")
+        self.show(DoctorChecks(text.heading, report.checks))
+        verified = report.config is not None and not text.unverified
+        self.show(UnverifiedValues(text, verified))
+        last = Message("error" if report.failed else "success", text.last)
+        last.add_class("-doctor-last")
+        self.show(last)
+        self.refresh_status()
 
     def remember(self, text: str) -> None:
         """Add a command to the history, saying once if the file can't be saved."""

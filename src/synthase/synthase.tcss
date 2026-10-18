@@ -66,6 +66,38 @@ Screen {
 }
 .msg.-help .rows > * { height: auto; }
 
+/* /doctor: the heading, then each check's word and text in two columns; the
+   unverified values; the last line. The word carries the meaning, colour only
+   helps. A blank row between the parts. */
+.msg.-doctor > .body > .heading { height: auto; color: $heading; text-style: bold; }
+.msg.-doctor .rows {
+    height: auto;
+    margin-top: 1;
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-doctor .rows > * { height: auto; }
+.msg.-doctor .word { width: 4; text-style: bold; }
+.msg.-doctor .word.-ok { color: $success; }
+.msg.-doctor .word.-fail, .msg.-doctor .text.-fail { color: $error; }
+.msg.-doctor .fix { color: $foreground; }
+
+.msg.-unverified, .msg.-doctor-last { margin-top: 1; }
+.msg.-unverified > .body > .heading { height: auto; }
+.msg.-unverified .rows {
+    height: auto;
+    padding-left: 2;
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 3;
+}
+.msg.-unverified .rows > * { height: auto; }
+.msg.-unverified .key { color: $muted; }
+.msg.-unverified .value { color: $foreground; }
+
 /* Bottom block: rule, input, rule, then the status line */
 #bottom {
     dock: bottom;

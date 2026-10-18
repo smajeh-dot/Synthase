@@ -2,12 +2,14 @@
 
 import asyncio
 
+from synthase import __version__
 from synthase import app as app_module
 from synthase.app import NOT_YET, UNKNOWN, Message, SynthaseApp
+from synthase.cli import main
 from synthase.commands import ROOT_HINT
 from synthase.config import read_template
 from synthase.history import FILE_NAME
-from synthase.workspace import remember
+from synthase.workspace import FOLDERS, remember
 
 
 def invented_workspace(tmp_path, unverified):
@@ -290,5 +292,95 @@ def test_tab_completes_a_help_topic():
     async def steps(app, pilot):
         await press_tab(app, pilot, "/help co")
         assert bar(app) == "/help compound "
+
+    run(steps)
+
+
+def doctor_workspace(tmp_path, unverified):
+    """An invented workspace with every folder doctor checks for."""
+    folder = invented_workspace(tmp_path, unverified)
+    for name in FOLDERS:
+        (folder / name).mkdir()
+    return folder
+
+
+def shown(app, selector):
+    """The text each widget matching ``selector`` shows on screen."""
+    return [str(widget.render()) for widget in app.query(selector)]
+
+
+def test_doctor_shows_the_same_lines_as_syn_doctor(tmp_path, capsys):
+    folder = doctor_workspace(tmp_path, unverified=2)
+    main(["doctor"])
+    printed = [line.strip() for line in capsys.readouterr().out.splitlines()]
+
+    async def steps(app, pilot):
+        assert status_text(app).endswith("? 2 config values unverified")
+        # Five more values to check, including the IR range in cm⁻¹.
+        invented_workspace(tmp_path / "again", unverified=5)
+        config = tmp_path / "again" / "Documents" / "Synthase" / "config.toml"
+        (folder / "config.toml").write_bytes(config.read_bytes())
+        remember(folder)
+        await type_line(app, pilot, "/doctor")
+        echo, checks, unverified, last = messages(app)
+        assert echo == ("echo", "/doctor")
+        lines = [line.strip() for line in checks[1].splitlines()]
+        assert lines == printed[: len(lines)]
+        assert lines[0] == f"Synthase {__version__} self-test"
+        assert f"ok    Workspace found at {folder}" in lines
+        assert shown(app, ".word") == ["ok"] * 5
+        assert unverified[0] == "warning"
+        assert unverified[1].startswith(
+            "Unverified config values (5). Results that use them show a warning:"
+        )
+        values = shown(app, ".value")
+        assert any("≤0.5 synergy" in value for value in values)
+        assert any("1600–1650 cm⁻¹" in value for value in values)
+        assert last == ("success", "All checks passed.")
+        # The status line has read the config again.
+        assert status_text(app).endswith("? 5 config values unverified")
+
+    run(steps, size=(300, 40))
+
+
+def test_doctor_with_config_toml_missing(tmp_path):
+    folder = doctor_workspace(tmp_path, unverified=0)
+    (folder / "config.toml").unlink()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/doctor")
+        _, checks, unverified, last = messages(app)
+        lines = [line.strip() for line in checks[1].splitlines()]
+        assert f"FAIL  The workspace at {folder} is missing: config.toml" in lines
+        assert f'Fix: run syn init "{folder}". It adds what is missing' in checks[1]
+        assert "FAIL  Config not checked" in lines
+        assert "Fix: get the workspace check passing first." in lines
+        assert shown(app, ".word.-fail") == ["FAIL", "FAIL"]
+        assert unverified == (
+            "warning",
+            "The unverified config values can't be listed until the config is fixed.",
+        )
+        assert last == ("error", "2 checks failed. Fix them, then run /doctor again.")
+
+    run(steps)
+
+
+def test_doctor_shows_fix_lines_as_plain_text(tmp_path):
+    folder = doctor_workspace(tmp_path, unverified=0)
+    config = folder / "config.toml"
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace('compounds = ""', "compounds = 'no such folder'"), encoding="utf-8"
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/doctor")
+        assert any(
+            '"compounds" under [folders] in' in fix for fix in shown(app, ".fix")
+        )
+        assert messages(app)[-2] == ("success", "Every config value has been verified.")
+        assert messages(app)[-1][1].startswith(
+            "1 check failed. Fix it, then run /doctor"
+        )
 
     run(steps)
