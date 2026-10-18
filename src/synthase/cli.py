@@ -33,12 +33,16 @@ from synthase.compounds import (
     compound_batches,
     compound_history,
     compound_spectra,
+    edit_batch,
     edit_compound,
+    get_batch,
     get_compound,
+    get_spectrum,
     link_spectrum,
     list_compounds,
     missing_fields,
     parse_batch_date,
+    parse_batch_value,
     parse_class,
     parse_field,
     parse_mass,
@@ -47,8 +51,10 @@ from synthase.compounds import (
     parse_yield,
     purity_warnings,
     read_smiles,
+    remove_batch,
     spectra_path,
     table_row,
+    unlink_spectrum,
 )
 from synthase.config import ConfigError, load_config
 from synthase.doctor import run_checks
@@ -120,6 +126,25 @@ COMPOUND_SPECTRUM_HELP = (
     "Link a spectra file to a compound. The file must be inside the workspace, "
     'for example in a "spectra" folder. With no file, Synthase asks for it and '
     "its kind."
+)
+
+COMPOUND_EDIT_BATCH_HELP = (
+    "Correct a batch's date, mass or yield. With no options, Synthase asks about "
+    "each and shows its current value; press Enter to keep it, or type - to clear "
+    "the mass or yield. With options, it changes only those. Changing a value "
+    "that is already set always asks first."
+)
+
+COMPOUND_REMOVE_BATCH_HELP = (
+    "Remove a batch entered by mistake, after a yes. Nothing is deleted: it is "
+    'hidden from "syn compound show" but stays in "syn compound history", and '
+    "the other batches keep their numbers."
+)
+
+COMPOUND_UNLINK_HELP = (
+    "Remove a spectra link made by mistake, after a yes. The file itself is not "
+    'touched, and the link stays in "syn compound history". With no file, '
+    "Synthase lists the linked files and asks which one."
 )
 
 LABEL_NEEDED = (
@@ -231,6 +256,31 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PERCENT",
         help="the percentage yield, such as 64.2",
     )
+    edit_batch_command = compound_commands.add_parser(
+        "edit-batch",
+        help="correct a batch's date, mass or yield",
+        description=COMPOUND_EDIT_BATCH_HELP,
+    )
+    remove_batch_command = compound_commands.add_parser(
+        "remove-batch",
+        help="remove a batch entered by mistake",
+        description=COMPOUND_REMOVE_BATCH_HELP,
+    )
+    for command in (edit_batch_command, remove_batch_command):
+        command.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+        command.add_argument(
+            "batch", metavar="BATCH", help="the batch number, such as 1"
+        )
+    edit_batch_command.add_argument("--date", help="the date it was made")
+    edit_batch_command.add_argument(
+        "--mass", help="the mass made, in mg or g, such as 152 mg (- clears it)"
+    )
+    edit_batch_command.add_argument(
+        "--yield",
+        dest="yield_percent",
+        metavar="PERCENT",
+        help="the percentage yield, such as 64.2 (- clears it)",
+    )
     spectrum = compound_commands.add_parser(
         "spectrum",
         help="link a spectra file in the workspace to a compound",
@@ -243,6 +293,15 @@ def build_parser() -> argparse.ArgumentParser:
     spectrum.add_argument(
         "--kind",
         help=", ".join(SPECTRUM_KINDS[:-1]) + f" or {SPECTRUM_KINDS[-1]}",
+    )
+    unlink = compound_commands.add_parser(
+        "unlink",
+        help="remove a spectra link made by mistake",
+        description=COMPOUND_UNLINK_HELP,
+    )
+    unlink.add_argument("id", metavar="ID", help="its ID, such as SYN-001")
+    unlink.add_argument(
+        "file", nargs="?", metavar="FILE", help="the linked file, as the card shows it"
     )
     show = compound_commands.add_parser(
         "show",
@@ -359,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
             return compound_batch(args)
         if args.compound_command == "spectrum":
             return compound_spectrum(args)
+        if args.compound_command == "edit-batch":
+            return compound_edit_batch(args)
+        if args.compound_command == "remove-batch":
+            return compound_remove_batch(args)
+        if args.compound_command == "unlink":
+            return compound_unlink(args)
         args.compound_parser.print_help()
         return 0
     # With no command, a bare `syn` shows the help text.
@@ -690,15 +755,16 @@ def ask_edit(workspace: Path, compound: Compound) -> dict[str, str | None]:
 
 def confirm_change(change: Change) -> bool:
     """Ask before changing or clearing a value that is already set."""
+    # A batch's value, logged as "batch 1 mass", is asked about as "batch 1's mass".
+    batch, _, part = change.name.rpartition(" ")
+    name = f"{batch}'s {part}" if batch.startswith("batch ") else f"the {change.name}"
     if change.new is None:
-        question = f'Clear the {change.name} ("{change.old}")? [y/N] '
+        question = f'Clear {name} ("{change.old}")? [y/N] '
     else:
-        question = (
-            f'Change the {change.name} from "{change.old}" to "{change.new}"? [y/N] '
-        )
+        question = f'Change {name} from "{change.old}" to "{change.new}"? [y/N] '
     if ask_yes(question):
         return True
-    print(f'Kept the {change.name} as "{change.old}".')
+    print(f'Kept {name} as "{change.old}".')
     return False
 
 
@@ -926,6 +992,104 @@ def batch_cells(batch: Batch) -> tuple[str | None, ...]:
     return (str(batch.number), batch.made_on, batch.mass, batch.yield_text)
 
 
+def compound_edit_batch(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound, batch = get_batch(workspace, args.id, args.batch)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    flags = {
+        "made_on": args.date,
+        "mass": args.mass,
+        "yield_percent": args.yield_percent,
+    }
+    try:
+        if all(flag is None for flag in flags.values()):
+            flags = ask_edit_batch(compound, batch)
+        compound, batch, changes = edit_batch(
+            workspace, args.id, args.batch, confirm_change, **flags
+        )
+    except CompoundError as error:
+        print(error, file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Nothing was changed.", file=sys.stderr)
+        return 1
+    if not changes:
+        print("Nothing was changed.")
+        return 0
+    print(
+        f"Saved {len(changes)} change{'' if len(changes) == 1 else 's'} "
+        f"to batch {batch.number} of {compound.id}: {compound.label}"
+    )
+    print(f"  {aligned([batch_cells(batch)])[0]}")
+    if batch.warning:
+        print(batch.warning)
+    return 0
+
+
+def ask_edit_batch(compound: Compound, batch: Batch) -> dict[str, str | None]:
+    """Ask about the batch's date, mass and yield, showing the current values.
+
+    Returns the answers by edit_batch option, with None for each to keep.
+    Raises EOFError or KeyboardInterrupt if the user stops partway.
+    """
+    print(
+        f"Editing batch {batch.number} of {compound.id}: {compound.label}. "
+        "Press Enter to keep a value, or type - to clear the mass or yield."
+    )
+    answers: dict[str, str | None] = {}
+    for option, part, question, current in (
+        ("made_on", "date", "Date made", batch.made_on),
+        ("mass", "mass", "Mass made", batch.mass),
+        ("yield_percent", "yield", "Yield in %", batch.yield_text),
+    ):
+        shown = "" if current is None else f" [{current}]"
+
+        def check(text: str, part: str = part) -> str | None:
+            answer = text if text.strip() else None
+            if answer is not None:
+                parse_batch_value(part, answer)
+            if part == "yield" and (
+                after(answers["mass"], batch.mass_g) is None
+                and after(answer, batch.yield_percent) is None
+            ):
+                raise CompoundError("A batch needs its mass made, its yield or both.")
+            return answer
+
+        answers[option] = ask_until(f"{question}{shown}: ", check)
+    return answers
+
+
+def compound_remove_batch(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound, batch = get_batch(workspace, args.id, args.batch)
+        question = (
+            f"Remove batch {batch.number} of {compound.id} ({batch.details})? "
+            "It is hidden from the card but kept in the history, and the other "
+            "batches keep their numbers. [y/N] "
+        )
+        if not ask_yes(question):
+            print(f"Kept batch {batch.number} of {compound.id} as it was.")
+            return 0
+        remove_batch(workspace, args.id, args.batch)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print()
+        print("Nothing was changed.", file=sys.stderr)
+        return 1
+    print(
+        f"Removed batch {batch.number} from {compound.id}: {compound.label}. "
+        f'It stays in "syn compound history {compound.id}".'
+    )
+    return 0
+
+
 def compound_spectrum(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
@@ -985,3 +1149,61 @@ def spectrum_cells(spectrum: Spectrum, workspace: Path) -> tuple[str | None, ...
         str(Path(spectrum.path)),
         f"(added {spectrum.added[:10]}){found}",
     )
+
+
+def compound_unlink(args: argparse.Namespace) -> int:
+    try:
+        workspace = current_workspace()
+        compound = get_compound(workspace, args.id)
+        file = args.file
+        if file is None:
+            file = ask_linked(workspace, compound)
+        compound, spectrum = get_spectrum(workspace, args.id, file)
+        name = spectrum_name(spectrum)
+        question = (
+            f"Unlink {name} from {compound.id}? The file itself is not touched. [y/N] "
+        )
+        if not ask_yes(question):
+            print(f"Kept the link to {name}.")
+            return 0
+        unlink_spectrum(workspace, args.id, file)
+    except (WorkspaceError, CompoundError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    except (EOFError, KeyboardInterrupt):
+        print()
+        print("Nothing was changed.", file=sys.stderr)
+        return 1
+    print(f"Unlinked {name} from {compound.id}: {compound.label}.")
+    return 0
+
+
+def ask_linked(workspace: Path, compound: Compound) -> str:
+    """List the files linked to ``compound``, numbered, and ask which one.
+
+    Returns its path. Raises EOFError or KeyboardInterrupt if the user stops.
+    """
+    linked = compound_spectra(workspace, compound)
+    if not linked:
+        raise CompoundError(f"{compound.id} has no spectra linked.")
+    print(f"Spectra linked to {compound.id}: {compound.label}")
+    rows = [
+        (str(number), *spectrum_cells(spectrum, workspace))
+        for number, spectrum in enumerate(linked, start=1)
+    ]
+    for line in aligned(rows):
+        print(f"  {line}")
+    choices = "1" if len(linked) == 1 else f"1-{len(linked)}"
+
+    def check(text: str) -> str:
+        if text.strip() not in [row[0] for row in rows]:
+            raise CompoundError(f"Type the number of the file to unlink ({choices}).")
+        return linked[int(text) - 1].path
+
+    return ask_until(f"Which one? ({choices}): ", check)
+
+
+def spectrum_name(spectrum: Spectrum) -> str:
+    """The kind and path of ``spectrum``, as the card shows them."""
+    path = str(Path(spectrum.path))
+    return path if spectrum.kind is None else f"{spectrum.kind} {path}"

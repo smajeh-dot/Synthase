@@ -9,7 +9,7 @@ docs/decisions/0014-compound-register.md.
 import re
 import sqlite3
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
@@ -18,7 +18,7 @@ from synthase.config import Config
 from synthase.numbers import sig_figs
 
 REGISTER_NAME = "compounds.sqlite"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 CLASSES = ("Schiff base", "chalcone", "starting material", "other")
 STATUSES = ("planned", "synthesised", "purified", "characterised", "tested")
 DEFAULT_STATUS = STATUSES[0]
@@ -80,8 +80,15 @@ SPECTRA_SCHEMA = """
 ALTER TABLE spectra ADD COLUMN kind TEXT;
 """
 
+# Version 4 (#46): when a batch or spectra link was removed. Removed rows are
+# kept, so nothing is deleted and batch numbers never change.
+REMOVED_SCHEMA = """
+ALTER TABLE batches ADD COLUMN removed TEXT;
+ALTER TABLE spectra ADD COLUMN removed TEXT;
+"""
+
 # What takes the register to each version from the one before.
-UPGRADES = {1: SCHEMA, 2: DETAILS_SCHEMA, 3: SPECTRA_SCHEMA}
+UPGRADES = {1: SCHEMA, 2: DETAILS_SCHEMA, 3: SPECTRA_SCHEMA, 4: REMOVED_SCHEMA}
 
 # The columns of a Compound, in order.
 COLUMNS = (
@@ -135,6 +142,9 @@ FIELD_NAMES = {
     "batch": "batch",
     "spectrum": "spectrum",
 }
+
+# The parts of a batch that can be corrected, named as the user sees them.
+BATCH_PARTS = ("date", "mass", "yield")
 
 # The kinds of spectrum a linked file may be.
 SPECTRUM_KINDS = ("IR", "1H NMR", "13C NMR", "mass spec", "UV-vis", "other")
@@ -216,9 +226,14 @@ class Batch:
             return "A yield over 100% usually means the product is still wet or impure."
         return ""
 
-    def __str__(self) -> str:
+    @property
+    def details(self) -> str:
+        """The date, mass and yield, such as "2026-10-18, 152 mg, 64.2%"."""
         parts = [self.made_on, self.mass, self.yield_text]
-        return f"{self.number}: " + ", ".join(part for part in parts if part)
+        return ", ".join(part for part in parts if part)
+
+    def __str__(self) -> str:
+        return f"{self.number}: {self.details}"
 
 
 @dataclass(frozen=True)
@@ -273,7 +288,8 @@ class Change:
 
     @property
     def name(self) -> str:
-        return FIELD_NAMES[self.field]
+        # A batch correction is logged under its own name, such as "batch 1 mass".
+        return FIELD_NAMES.get(self.field, self.field)
 
 
 def format_id(number: int) -> str:
@@ -506,6 +522,31 @@ def parse_yield(text: str) -> float:
     percent = float(match.group(1))
     _check_yield(percent)
     return percent
+
+
+def parse_batch_number(text: str) -> int:
+    """The batch number ``text`` gives, such as ``2``."""
+    text = text.strip()
+    if not re.fullmatch(r"\d+", text) or int(text) == 0:
+        raise CompoundError(
+            f'"{text}" isn\'t a batch number. Batches are numbered 1, 2, 3 and so on.'
+        )
+    return int(text)
+
+
+def parse_batch_value(part: str, text: str) -> object:
+    """The new value ``text`` gives for a batch's ``part``: None if it is cleared.
+
+    ``part`` is one of BATCH_PARTS. The date comes back as YYYY-MM-DD.
+    """
+    cleared = text.strip() == CLEAR
+    if part == "date":
+        if cleared:
+            raise CompoundError("A batch always has a date, so it can't be cleared.")
+        return parse_batch_date(text).isoformat()
+    if cleared:
+        return None
+    return parse_mass(text) if part == "mass" else parse_yield(text)
 
 
 def parse_spectrum_kind(text: str) -> str | None:
@@ -852,14 +893,140 @@ def add_batch(
 
 
 def compound_batches(workspace: Path, compound: Compound) -> list[Batch]:
-    """Every batch of ``compound``, in the order added."""
+    """Every batch of ``compound`` not removed, in the order added."""
+    return [
+        batch for _, batch, removed in _all_batches(workspace, compound) if not removed
+    ]
+
+
+def _all_batches(
+    workspace: Path, compound: Compound
+) -> list[tuple[int, Batch, str | None]]:
+    """Every batch of ``compound``, removed ones too, in the order added.
+
+    Each comes with its row ID and when it was removed. Batches are numbered
+    by counting every row, so removing one never renumbers the rest.
+    """
     found = _read(
         workspace,
-        "SELECT made_on, mass_g, yield_percent FROM batches "
+        "SELECT id, made_on, mass_g, yield_percent, removed FROM batches "
         "WHERE compound_id = ? ORDER BY id",
         (compound.number,),
     )
-    return [Batch(number, *row) for number, row in enumerate(found, start=1)]
+    return [
+        (row_id, Batch(number, *values), removed)
+        for number, (row_id, *values, removed) in enumerate(found, start=1)
+    ]
+
+
+def get_batch(workspace: Path, text: str, number: str) -> tuple[Compound, Batch]:
+    """Compound ``text`` and its batch ``number``, which must not be removed."""
+    compound = get_compound(workspace, text)
+    return compound, _find_batch(workspace, compound, number)[1]
+
+
+def _find_batch(workspace: Path, compound: Compound, text: str) -> tuple[int, Batch]:
+    number = parse_batch_number(text)
+    every = _all_batches(workspace, compound)
+    if number > len(every):
+        kept = [batch.number for _, batch, removed in every if not removed]
+        there = f"Its batches are {_listed(kept)}." if kept else "It has no batches."
+        raise CompoundError(f"{compound.id} has no batch {number}. {there}")
+    row_id, batch, removed = every[number - 1]
+    if removed:
+        raise CompoundError(
+            f"Batch {number} of {compound.id} was removed on {removed[:10]}."
+        )
+    return row_id, batch
+
+
+def _listed(numbers: list[int]) -> str:
+    """``numbers`` as "1", "1 and 3" or "1, 3 and 4"."""
+    words = [str(number) for number in numbers]
+    if len(words) == 1:
+        return words[0]
+    return f"{', '.join(words[:-1])} and {words[-1]}"
+
+
+def edit_batch(
+    workspace: Path,
+    text: str,
+    number: str,
+    confirm: Callable[[Change], bool],
+    made_on: str | None = None,
+    mass: str | None = None,
+    yield_percent: str | None = None,
+) -> tuple[Compound, Batch, list[Change]]:
+    """Correct the date, mass or yield of batch ``number`` of compound ``text``.
+
+    Works as edit_compound does: the values are typed text, a value left as
+    None or blank is kept, CLEAR empties the mass or yield, and changing a set
+    value happens only if ``confirm`` says yes. Each change is logged as, say,
+    "batch 1 mass". Returns the compound, the batch as saved and the changes.
+    """
+    compound = get_compound(workspace, text)
+    row_id, batch = _find_batch(workspace, compound, number)
+    current = {
+        "date": batch.made_on,
+        "mass": batch.mass_g,
+        "yield": batch.yield_percent,
+    }
+    wanted = {}
+    for part, value in zip(BATCH_PARTS, (made_on, mass, yield_percent), strict=True):
+        if value is None or not value.strip():
+            continue
+        new = parse_batch_value(part, value)
+        if new != current[part]:
+            wanted[part] = new
+    asked = _corrected(batch, {**current, **wanted})
+    if asked.mass_g is None and asked.yield_percent is None:
+        raise CompoundError("A batch needs its mass made, its yield or both.")
+    changes = []
+    for part, new in wanted.items():
+        old = _batch_text(batch, part)
+        change = Change(f"batch {batch.number} {part}", old, _batch_text(asked, part))
+        if old is None or confirm(change):
+            changes.append(change)
+            current[part] = new
+    if not changes:
+        return compound, batch, []
+
+    batch = _corrected(batch, current)
+    with _open(workspace) as db:
+        db.execute(
+            "UPDATE batches SET made_on = ?, mass_g = ?, yield_percent = ? "
+            "WHERE id = ?",
+            (batch.made_on, batch.mass_g, batch.yield_percent, row_id),
+        )
+        _log(db, compound.number, changes)
+    return compound, batch, changes
+
+
+def _corrected(batch: Batch, values: dict[str, object]) -> Batch:
+    return replace(
+        batch,
+        made_on=values["date"],
+        mass_g=values["mass"],
+        yield_percent=values["yield"],
+    )
+
+
+def _batch_text(batch: Batch, part: str) -> str | None:
+    """How ``batch``'s ``part`` is shown and logged."""
+    return {"date": batch.made_on, "mass": batch.mass, "yield": batch.yield_text}[part]
+
+
+def remove_batch(workspace: Path, text: str, number: str) -> tuple[Compound, Batch]:
+    """Hide batch ``number`` of compound ``text`` from the card, and log it.
+
+    Nothing is deleted, and the other batches keep their numbers.
+    """
+    compound = get_compound(workspace, text)
+    row_id, batch = _find_batch(workspace, compound, number)
+    with _open(workspace) as db:
+        db.execute("UPDATE batches SET removed = ? WHERE id = ?", (_now(), row_id))
+        _log(db, compound.number, [Change("batch", str(batch), "removed")])
+    return compound, batch
 
 
 def link_spectrum(
@@ -876,7 +1043,8 @@ def link_spectrum(
     path = spectra_path(workspace, file)
     with _open(workspace) as db:
         for (linked,) in db.execute(
-            "SELECT path FROM spectra WHERE compound_id = ?", (compound.number,)
+            "SELECT path FROM spectra WHERE compound_id = ? AND removed IS NULL",
+            (compound.number,),
         ):
             if linked.casefold() == path.casefold():
                 raise CompoundError(f"{linked} is already linked to {compound.id}.")
@@ -914,13 +1082,64 @@ def spectra_path(workspace: Path, file: Path) -> str:
 
 
 def compound_spectra(workspace: Path, compound: Compound) -> list[Spectrum]:
-    """Every spectra file linked to ``compound``, in the order linked."""
+    """Every spectra file linked to ``compound`` and not unlinked, in order."""
+    return [spectrum for _, spectrum in _linked(workspace, compound)]
+
+
+def _linked(workspace: Path, compound: Compound) -> list[tuple[int, Spectrum]]:
+    """Every link of ``compound`` not unlinked, with its row ID, in order."""
     found = _read(
         workspace,
-        "SELECT path, kind, added FROM spectra WHERE compound_id = ? ORDER BY id",
+        "SELECT id, path, kind, added FROM spectra "
+        "WHERE compound_id = ? AND removed IS NULL ORDER BY id",
         (compound.number,),
     )
-    return [Spectrum(*row) for row in found]
+    return [(row_id, Spectrum(*values)) for row_id, *values in found]
+
+
+def get_spectrum(workspace: Path, text: str, file: str) -> tuple[Compound, Spectrum]:
+    """Compound ``text`` and its link to ``file``."""
+    compound = get_compound(workspace, text)
+    return compound, _find_spectrum(workspace, compound, file)[1]
+
+
+def _find_spectrum(
+    workspace: Path, compound: Compound, file: str
+) -> tuple[int, Spectrum]:
+    """The link to ``file``, typed as the card shows it or as it was linked.
+
+    Capitals, and backslashes or slashes between folders, don't matter, so a
+    file that has since moved can still be found.
+    """
+    linked = _linked(workspace, compound)
+    if not linked:
+        raise CompoundError(f"{compound.id} has no spectra linked.")
+    typed = file.strip().strip('"')
+    # A file that is still there is found the same way as when it was linked.
+    with suppress(CompoundError):
+        typed = spectra_path(workspace, Path(typed))
+    wanted = typed.replace("\\", "/").casefold()
+    for row_id, spectrum in linked:
+        if spectrum.path.casefold() == wanted:
+            return row_id, spectrum
+    paths = ", ".join(str(Path(spectrum.path)) for _, spectrum in linked)
+    raise CompoundError(
+        f'"{file.strip()}" isn\'t linked to {compound.id}. '
+        f"Its linked files are: {paths}."
+    )
+
+
+def unlink_spectrum(workspace: Path, text: str, file: str) -> tuple[Compound, Spectrum]:
+    """Hide the link from compound ``text`` to ``file``, and log it.
+
+    The file itself is not touched, and the link stays in the register.
+    """
+    compound = get_compound(workspace, text)
+    row_id, spectrum = _find_spectrum(workspace, compound, file)
+    with _open(workspace) as db:
+        db.execute("UPDATE spectra SET removed = ? WHERE id = ?", (_now(), row_id))
+        _log(db, compound.number, [Change("spectrum", str(spectrum), "removed")])
+    return compound, spectrum
 
 
 def get_compound(workspace: Path, text: str) -> Compound:
