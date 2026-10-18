@@ -8,6 +8,14 @@ from datetime import date
 from pathlib import Path
 
 from synthase import __version__
+from synthase.compound_text import (
+    aligned,
+    batch_cells,
+    detail_text,
+    purity_lines,
+    spectrum_cells,
+    spectrum_name,
+)
 from synthase.compounds import (
     CLASSES,
     CLEAR,
@@ -23,7 +31,6 @@ from synthase.compounds import (
     Change,
     Compound,
     CompoundError,
-    Spectrum,
     add_batch,
     add_compound,
     archive_compound,
@@ -49,7 +56,6 @@ from synthase.compounds import (
     parse_spectrum_kind,
     parse_status,
     parse_yield,
-    purity_warnings,
     read_smiles,
     remove_batch,
     spectra_path,
@@ -832,20 +838,6 @@ def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -
         print(line)
 
 
-def aligned(rows: list[tuple[str | None, ...]]) -> list[str]:
-    """``rows`` as lines of aligned columns, with - in each blank cell."""
-    cells = [[cell or "-" for cell in row] for row in rows]
-    widths = [
-        max(len(line[column]) for line in cells) for column in range(len(cells[0]))
-    ]
-    return [
-        "  ".join(
-            cell.ljust(width) for cell, width in zip(line, widths, strict=True)
-        ).rstrip()
-        for line in cells
-    ]
-
-
 def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) -> int:
     try:
         path = place_table(name, workspace, load_config(workspace), "compounds")
@@ -905,24 +897,6 @@ def print_fields(compound: Compound, workspace: Path) -> None:
         if lines:
             print(group)
             print("\n".join(lines))
-
-
-def detail_text(compound: Compound, field: str) -> str | None:
-    if field == "risk_assessment" and compound.risk_assessment != "no":
-        return f"done on {compound.risk_assessment}"
-    if field == "risk_assessment":
-        return "not done"
-    return as_text(getattr(compound, field))
-
-
-def purity_lines(compound: Compound, workspace: Path) -> list[str]:
-    """The purity flag for ``compound``'s melting range, if it has one."""
-    if compound.melting_point is None:
-        return []
-    try:
-        return purity_warnings(compound, load_config(workspace))
-    except ConfigError as error:
-        return [f"The melting range can't be checked against the purity rule. {error}"]
 
 
 def compound_batch(args: argparse.Namespace) -> int:
@@ -986,10 +960,6 @@ def ask_batch(compound: Compound) -> tuple[date, float | None, float | None]:
 
     yield_percent = ask_until("Yield in % (e.g. 64.2): ", check_yield)
     return made_on, mass_g, yield_percent
-
-
-def batch_cells(batch: Batch) -> tuple[str | None, ...]:
-    return (str(batch.number), batch.made_on, batch.mass, batch.yield_text)
 
 
 def compound_edit_batch(args: argparse.Namespace) -> int:
@@ -1142,15 +1112,6 @@ def ask_spectrum(workspace: Path, compound: Compound) -> tuple[Path, str | None]
     return file, kind
 
 
-def spectrum_cells(spectrum: Spectrum, workspace: Path) -> tuple[str | None, ...]:
-    found = "" if (workspace / spectrum.path).is_file() else "  (file not found)"
-    return (
-        spectrum.kind,
-        str(Path(spectrum.path)),
-        f"(added {spectrum.added[:10]}){found}",
-    )
-
-
 def compound_unlink(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
@@ -1201,9 +1162,3 @@ def ask_linked(workspace: Path, compound: Compound) -> str:
         return linked[int(text) - 1].path
 
     return ask_until(f"Which one? ({choices}): ", check)
-
-
-def spectrum_name(spectrum: Spectrum) -> str:
-    """The kind and path of ``spectrum``, as the card shows them."""
-    path = str(Path(spectrum.path))
-    return path if spectrum.kind is None else f"{spectrum.kind} {path}"
