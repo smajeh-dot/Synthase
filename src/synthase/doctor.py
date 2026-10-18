@@ -8,13 +8,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from synthase.config import (
+    FOLDER_AREAS,
+    FOLDERS_TABLE,
     WORKSPACE_CONFIG_NAME,
     Config,
     ConfigError,
     ConfigValue,
     load_config,
 )
-from synthase.workspace import FOLDERS, WorkspaceError, current_workspace
+from synthase.tables import table_folder
+from synthase.workspace import (
+    FOLDERS,
+    WorkspaceError,
+    code_folder,
+    current_workspace,
+    inside_code_folder,
+)
 
 # The version pinned in pyproject.toml (decision 0002).
 REQUIRED_PYTHON = (3, 13)
@@ -109,7 +118,33 @@ def check_config(workspace: Path | None) -> tuple[Check, Config | None]:
     return Check(True, f"Config is valid: {config.path}"), config
 
 
+def check_table_folder(workspace: Path, config: Config, area: str) -> Check:
+    """Whether ``area``'s tables can be saved where config.toml says (decision 0015)."""
+    label = f"{area.capitalize()} folder"
+    folder = table_folder(workspace, config, area)
+    if not config.folder(area):
+        return Check(True, f"{label}: not set, tables go in {folder}")
+    if inside_code_folder(folder):
+        return Check(
+            False,
+            f"{label} {folder} is inside Synthase's own code folder ({code_folder()})",
+            f'choose a folder outside it for "{area}" under [{FOLDERS_TABLE}] '
+            "in config.toml.",
+        )
+    if not folder.is_dir():
+        return Check(
+            False,
+            f"{label} {folder} doesn't exist",
+            f'create it in File Explorer, or change "{area}" under '
+            f"[{FOLDERS_TABLE}] in config.toml.",
+        )
+    return Check(True, f"{label}: {folder}")
+
+
 def run_checks() -> Report:
     workspace, folder = check_workspace()
     config, loaded = check_config(folder)
-    return Report([check_python(), check_rdkit(), workspace, config], loaded)
+    checks = [check_python(), check_rdkit(), workspace, config]
+    if loaded is not None:
+        checks += [check_table_folder(folder, loaded, area) for area in FOLDER_AREAS]
+    return Report(checks, loaded)

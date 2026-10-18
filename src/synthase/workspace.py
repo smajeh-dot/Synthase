@@ -102,9 +102,13 @@ def _is_synthase_project(pyproject: Path) -> bool:
     return data.get("project", {}).get("name") == PACKAGE_NAME
 
 
+def inside_code_folder(path: Path) -> bool:
+    return Path(path).resolve().is_relative_to(code_folder())
+
+
 def check_outside_code_folder(path: Path) -> None:
     code = code_folder()
-    if Path(path).resolve().is_relative_to(code):
+    if inside_code_folder(path):
         raise WorkspaceError(
             f"Synthase can't create the workspace there: {path} is inside "
             f"Synthase's own code folder ({code}). The workspace holds your lab "
