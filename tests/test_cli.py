@@ -9,7 +9,7 @@ import pytest
 
 import synthase
 from synthase.cli import main
-from synthase.compounds import REGISTER_NAME, Compound, list_compounds
+from synthase.compounds import REGISTER_NAME, Compound, edit_compound, list_compounds
 from synthase.workspace import code_folder
 
 
@@ -360,6 +360,15 @@ def test_show_prints_the_card_then_what_is_missing(workspace, capsys):
         "\n"
         "Still missing:\n"
         "  no notes yet\n"
+        "  no melting point yet\n"
+        "  no Rf value yet\n"
+        "  no appearance yet\n"
+        "  not recorded whether it is coloured\n"
+        "  no solubility yet\n"
+        "  no DMSO stock concentration yet\n"
+        "  no storage conditions yet\n"
+        "  no risk assessment recorded\n"
+        "  no hazard notes yet\n"
     )
     assert main(["compound", "show", "2"]) == 0
     assert capsys.readouterr().out == (
@@ -370,12 +379,22 @@ def test_show_prints_the_card_then_what_is_missing(workspace, capsys):
         "  no class yet\n"
         "  no SMILES yet, so no formula or molar mass\n"
         "  no notes yet\n"
+        "  no melting point yet\n"
+        "  no Rf value yet\n"
+        "  no appearance yet\n"
+        "  not recorded whether it is coloured\n"
+        "  no solubility yet\n"
+        "  no DMSO stock concentration yet\n"
+        "  no storage conditions yet\n"
+        "  no risk assessment recorded\n"
+        "  no hazard notes yet\n"
     )
 
 
-def test_show_says_when_nothing_is_missing(workspace, capsys):
+def test_show_says_when_nothing_is_missing(workspace, capsys, invented_details):
     argv = ["compound", "add", "--label", "Test compound A", "--class", "other"]
     assert main([*argv, "--smiles", "C", "--notes", "invented"]) == 0
+    edit_compound(workspace, "1", lambda change: True, **invented_details)
     capsys.readouterr()
     assert main(["compound", "show", "SYN-001"]) == 0
     out = capsys.readouterr().out

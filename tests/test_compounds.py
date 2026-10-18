@@ -12,6 +12,8 @@ from synthase.compounds import (
     Change,
     Compound,
     CompoundError,
+    MeltingRange,
+    Stock,
     add_compound,
     archive_compound,
     check_label,
@@ -22,9 +24,16 @@ from synthase.compounds import (
     missing_fields,
     parse_class,
     parse_id,
+    parse_melting_point,
+    parse_rf,
+    parse_risk_assessment,
     parse_status,
+    parse_stock,
+    parse_yes_no,
+    purity_warnings,
     read_smiles,
 )
+from synthase.config import Config, ConfigValue
 from synthase.numbers import sig_figs
 
 
@@ -295,12 +304,29 @@ def test_missing_fields_names_every_blank_one():
         "no class yet",
         "no SMILES yet, so no formula or molar mass",
         "no notes yet",
+        "no melting point yet",
+        "no Rf value yet",
+        "no appearance yet",
+        "not recorded whether it is coloured",
+        "no solubility yet",
+        "no DMSO stock concentration yet",
+        "no storage conditions yet",
+        "no risk assessment recorded",
+        "no hazard notes yet",
     ]
 
 
-def test_nothing_missing_once_every_field_is_filled(tmp_path):
-    full = add_compound(tmp_path, "Test compound A", "chalcone", "CCO", notes="x")
+def test_nothing_missing_once_every_field_is_filled(tmp_path, invented_details):
+    full = add_compound(
+        tmp_path, "Test compound A", "chalcone", "CCO", notes="x", **invented_details
+    )
     assert missing_fields(full) == []
+
+
+def test_a_risk_assessment_not_done_is_still_missing():
+    compound = Compound(1, "Test compound A", risk_assessment="no")
+    assert "risk assessment not done yet" in missing_fields(compound)
+    assert "no risk assessment recorded" not in missing_fields(compound)
 
 
 # --- Editing and archiving (#34) ---
@@ -455,3 +481,243 @@ def test_archived_compound_keeps_its_label_and_can_be_edited(tmp_path):
         add_compound(tmp_path, "Test compound A")
     compound, _ = edit_compound(tmp_path, "1", say(True), notes="abandoned")
     assert compound.archived and compound.notes == "abandoned"
+
+
+# --- Characterisation, handling and safety (#35) ---
+
+
+@pytest.mark.parametrize(
+    ("text", "low", "high"),
+    [
+        ("455-457", 455, 457),
+        ("455.5 – 457", 455.5, 457),
+        ("455 K to 457 K", 455, 457),
+        ("456", 456, 456),
+        ("456k", 456, 456),
+    ],
+)
+def test_melting_range_is_read_in_kelvin(text, low, high):
+    assert parse_melting_point(text) == MeltingRange(low, high)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("457-455", r"runs from high to low \(457 to 455 K\)"),
+        ("0", "always above 0 K"),
+        ("hot", "isn't a melting range. Type it in kelvin"),
+        ("455-", "isn't a melting range"),
+    ],
+)
+def test_impossible_melting_range_is_refused(text, message):
+    with pytest.raises(CompoundError, match=message):
+        parse_melting_point(text)
+
+
+def test_melting_range_is_shown_in_kelvin():
+    assert str(MeltingRange(455.5, 457)) == "455.5–457 K"
+    assert str(MeltingRange(456, 456)) == "456 K"
+
+
+@pytest.mark.parametrize(
+    ("text", "rf"), [("0.45", 0.45), (".3", 0.3), ("0", 0), ("1", 1)]
+)
+def test_rf_from_0_to_1_is_accepted(text, rf):
+    assert parse_rf(text) == rf
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("1.3", r'between 0 and 1\. "1\.3" isn\'t'),
+        ("-0.2", r'between 0 and 1\. "-0\.2" isn\'t'),
+        ("nan", "isn't an Rf value"),
+        ("far", "isn't an Rf value"),
+    ],
+)
+def test_rf_outside_0_to_1_is_refused(text, message):
+    with pytest.raises(CompoundError, match=message):
+        parse_rf(text)
+
+
+def test_yes_no_answers():
+    assert parse_yes_no(" Yes ") is True
+    assert parse_yes_no("n") is False
+    with pytest.raises(CompoundError, match="Answer yes or no"):
+        parse_yes_no("maybe")
+
+
+@pytest.mark.parametrize(
+    ("text", "stock"),
+    [
+        ("10 mg/mL", Stock(10, "mg/mL")),
+        ("2.5mM", Stock(2.5, "mM")),
+        ("500 ug/ml", Stock(500, "µg/mL")),
+    ],
+)
+def test_dmso_stock_needs_a_number_and_a_known_unit(text, stock):
+    assert parse_stock(text) == stock
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("10", "Give the unit as well"),
+        ("10 g/L", '"g/L" isn\'t a unit Synthase knows'),
+        ("0 mg/mL", "must be above zero"),
+        ("lots", "isn't a concentration"),
+    ],
+)
+def test_unusable_dmso_stock_is_refused(text, message):
+    with pytest.raises(CompoundError, match=message):
+        parse_stock(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "saved"),
+    [("2020-01-31", "2020-01-31"), ("31/1/2020", "2020-01-31"), ("No", "no")],
+)
+def test_risk_assessment_is_a_date_or_no(text, saved):
+    assert parse_risk_assessment(text) == saved
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("31/02/2026", '"31/02/2026" isn\'t a real date'),
+        ("2026-13-01", "isn't a real date"),
+        ("2999-01-01", "2999-01-01 is in the future"),
+        ("yes", "instead of yes"),
+        ("last week", "isn't a date"),
+    ],
+)
+def test_impossible_risk_assessment_date_is_refused(text, message):
+    with pytest.raises(CompoundError, match=message):
+        parse_risk_assessment(text)
+
+
+def test_details_are_saved_and_read_back(tmp_path, invented_details):
+    added = add_compound(tmp_path, "Test compound A", **invented_details)
+    assert added == get_compound(tmp_path, "1")
+    assert added.melting_point == MeltingRange(455, 457)
+    assert added.rf == 0.45
+    assert added.dmso_stock == Stock(10, "mg/mL")
+    assert added.risk_assessment == "2020-01-31"
+
+
+def test_coloured_is_saved_where_plate_design_can_read_it(tmp_path):
+    add_compound(tmp_path, "Test compound A", coloured="yes")
+    add_compound(tmp_path, "Test compound B", coloured="no")
+    add_compound(tmp_path, "Test compound C")
+    assert [c.coloured for c in list_compounds(tmp_path)] == [True, False, None]
+
+
+def test_rf_without_its_solvent_system_is_refused(tmp_path):
+    with pytest.raises(CompoundError, match="needs the solvent system"):
+        add_compound(tmp_path, "Test compound A", rf="0.45")
+    add_compound(tmp_path, "Test compound A", rf="0.45", rf_solvent="invented 3:1")
+    with pytest.raises(CompoundError, match="needs the solvent system"):
+        edit_compound(tmp_path, "1", say(True), rf_solvent="-")
+    assert get_compound(tmp_path, "1").rf_solvent == "invented 3:1"
+
+
+def test_detail_edits_ask_and_log_as_text(tmp_path, monkeypatch):
+    add_compound(tmp_path, "Test compound A", melting_point="455-457", coloured="no")
+    confirm = say(True)
+    compound, changes = edit_compound(
+        tmp_path, "1", confirm, melting_point="455-456", coloured="yes", hazards="x"
+    )
+    assert compound.melting_point == MeltingRange(455, 456)
+    assert compound.coloured is True
+    assert [(c.name, c.old, c.new) for c in confirm.asked] == [
+        ("melting point", "455–457 K", "455–456 K"),
+        ("coloured", "no", "yes"),
+    ]
+    assert [(c.name, c.old, c.new) for c in changes][-1] == ("hazard notes", None, "x")
+    logged = [(c.name, c.new) for c in compound_history(tmp_path, "1")[1]]
+    assert ("melting point", "455–456 K") in logged
+
+
+def test_a_detail_can_be_cleared(tmp_path):
+    add_compound(tmp_path, "Test compound A", dmso_stock="10 mM")
+    compound, _ = edit_compound(tmp_path, "1", say(True), dmso_stock="-")
+    assert compound.dmso_stock is None
+    assert get_compound(tmp_path, "1").dmso_stock is None
+
+
+def purity_config(limit, verified):
+    rule = ConfigValue(
+        "melting_point.purity_range",
+        "melting-point purity rule",
+        limit,
+        "K",
+        "invented for a test",
+        verified,
+    )
+    return Config({rule.key: rule}, "invented")
+
+
+# Hand-worked against an invented 3 K limit: 451.2 to 454.2 K is 3.0 K wide
+# (inside the rule, though the computer makes it 2.9999...); 454.3 makes it
+# 3.1 K, just over.
+@pytest.mark.parametrize(
+    ("melting_point", "flagged"),
+    [("451.2-454.1", False), ("451.2-454.2", False), ("451.2-454.3", True)],
+)
+def test_melting_range_wider_than_the_purity_rule_is_flagged(melting_point, flagged):
+    compound = Compound(
+        1, "Test compound A", melting_point=parse_melting_point(melting_point)
+    )
+    lines = purity_warnings(compound, purity_config(3.0, verified=True))
+    if flagged:
+        assert lines == [
+            "! The melting range is 3.1 K wide, wider than the melting-point purity "
+            "rule (3 K), so the sample may not be pure."
+        ]
+    else:
+        assert lines == []
+
+
+def test_purity_flag_carries_the_unverified_warning():
+    compound = Compound(1, "Test compound A", melting_point=MeltingRange(450, 455))
+    flag, warning = purity_warnings(compound, purity_config(3.0, verified=False))
+    assert flag.startswith("! The melting range is 5 K wide")
+    assert warning.startswith("Warning: melting-point purity rule (3 K) has not")
+
+
+def test_no_melting_point_means_no_flag():
+    compound = Compound(1, "Test compound A")
+    assert purity_warnings(compound, purity_config(3.0, verified=False)) == []
+
+
+def test_version_1_register_is_read_without_change_then_upgraded(tmp_path):
+    with closing(sqlite3.connect(tmp_path / REGISTER_NAME)) as db:
+        db.executescript(compounds.SCHEMA + "PRAGMA user_version = 1;")
+        db.execute(
+            "INSERT INTO compounds (label, smiles, status, notes) "
+            "VALUES ('Test compound A', 'CCO', 'planned', 'invented')"
+        )
+        db.execute(
+            "INSERT INTO changes (compound_id, changed, field, old, new) "
+            "VALUES (1, '2026-01-01T09:00:00', 'label', NULL, 'Test compound A')"
+        )
+        db.commit()
+    before = (tmp_path / REGISTER_NAME).read_bytes()
+    compound = get_compound(tmp_path, "1")
+    assert (compound.label, compound.notes, compound.melting_point) == (
+        "Test compound A",
+        "invented",
+        None,
+    )
+    assert (tmp_path / REGISTER_NAME).read_bytes() == before
+
+    edit_compound(tmp_path, "1", say(True), melting_point="455-457")
+    assert rows(tmp_path, "PRAGMA user_version") == [(SCHEMA_VERSION,)]
+    upgraded = get_compound(tmp_path, "1")
+    assert (upgraded.smiles, upgraded.notes) == ("CCO", "invented")
+    assert upgraded.melting_point == MeltingRange(455, 457)
+    history = compound_history(tmp_path, "1")[1]
+    assert [(c.field, c.new) for c in history] == [
+        ("label", "Test compound A"),
+        ("melting_point", "455–457 K"),
+    ]

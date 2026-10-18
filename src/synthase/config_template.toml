@@ -50,12 +50,13 @@ source = "UNVERIFIED placeholder: check against the literature"
 verified = false
 
 # --- Melting point ---
-# The widest melting range a pure sample should have.
+# The widest melting range a pure sample should have. Synthase records melting
+# points in kelvin; a width in K is the same as a width in °C.
 
 [melting_point.purity_range]
 name = "melting-point purity rule"
 value = 2.0
-unit = "°C"
+unit = "K"
 source = "UNVERIFIED placeholder: check against the literature"
 verified = false
 
