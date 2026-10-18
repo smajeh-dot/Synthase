@@ -94,8 +94,11 @@ def check_rdkit() -> Check:
     return Check(True, f"RDKit {rdkit.__version__} reads {test}")
 
 
-def check_workspace() -> tuple[Check, Path | None]:
-    """The workspace check, and the workspace folder if it was found."""
+def check_workspace(init: str = "syn init") -> tuple[Check, Path | None]:
+    """The workspace check, and the workspace folder if it was found.
+
+    ``init`` is how the Fix line says to run init.
+    """
     try:
         path = current_workspace()
     except WorkspaceError as error:
@@ -107,7 +110,7 @@ def check_workspace() -> tuple[Check, Path | None]:
         return Check(
             False,
             f"The workspace at {path} is missing: {', '.join(missing)}",
-            f'run syn init "{path}". It adds what is missing and never touches '
+            f'run {init} "{path}". It adds what is missing and never touches '
             "your files. If it asks about config.toml, answer no to keep yours.",
         ), path
     return Check(True, f"Workspace found at {path}"), path
@@ -149,8 +152,9 @@ def check_table_folder(workspace: Path, config: Config, area: str) -> Check:
     return Check(True, f"{label}: {folder}")
 
 
-def run_checks() -> Report:
-    workspace, folder = check_workspace()
+def run_checks(init: str = "syn init") -> Report:
+    """Every check. ``init`` is how a Fix line says to run init."""
+    workspace, folder = check_workspace(init)
     config, loaded = check_config(folder)
     checks = [check_python(), check_rdkit(), workspace, config]
     if loaded is not None:

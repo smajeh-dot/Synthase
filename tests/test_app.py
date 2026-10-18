@@ -1,15 +1,17 @@
 """Headless tests of the full-screen app, driven by Textual's test pilot."""
 
 import asyncio
+import os
 
 from synthase import __version__
 from synthase import app as app_module
-from synthase.app import NOT_YET, UNKNOWN, Message, SynthaseApp
+from synthase.app import NOT_YET, PLACEHOLDER, UNKNOWN, Message, SynthaseApp
 from synthase.cli import main
 from synthase.commands import ROOT_HINT
+from synthase.compound_questions import add_flow
 from synthase.config import read_template
 from synthase.history import FILE_NAME
-from synthase.workspace import FOLDERS, remember
+from synthase.workspace import FOLDERS, POINTER_NAME, remember, settings_folder
 
 
 def invented_workspace(tmp_path, unverified):
@@ -352,7 +354,7 @@ def test_doctor_with_config_toml_missing(tmp_path):
         _, checks, unverified, last = messages(app)
         lines = [line.strip() for line in checks[1].splitlines()]
         assert f"FAIL  The workspace at {folder} is missing: config.toml" in lines
-        assert f'Fix: run syn init "{folder}". It adds what is missing' in checks[1]
+        assert f'Fix: run /init "{folder}". It adds what is missing' in checks[1]
         assert "FAIL  Config not checked" in lines
         assert "Fix: get the workspace check passing first." in lines
         assert shown(app, ".word.-fail") == ["FAIL", "FAIL"]
@@ -382,5 +384,217 @@ def test_doctor_shows_fix_lines_as_plain_text(tmp_path):
         assert messages(app)[-1][1].startswith(
             "1 check failed. Fix it, then run /doctor"
         )
+
+    run(steps)
+
+
+def bar_question(app):
+    return str(app.query_one("#question").render())
+
+
+def answering(app):
+    return app.query_one("#bar").has_class("-answering")
+
+
+def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
+    folder = (tmp_path / "Lab work" / "Synthase-data").resolve()
+    config = folder / "config.toml"
+    pointer = settings_folder() / POINTER_NAME
+    question = (
+        f"A workspace already exists at {folder}. Replace its config.toml with a "
+        "fresh copy of the template? Any values you have checked will be reset "
+        "(the old file is kept as config.toml.bak-…). Type yes to replace it [no]:"
+    )
+
+    async def steps(app, pilot):
+        assert status_text(app) == "› No workspace yet. Type /init to create one."
+
+        # A new folder: no question, the same words as syn init.
+        await type_line(app, pilot, f'/init "{folder}"')
+        assert not answering(app)
+        assert messages(app)[1:] == [
+            ("success", f"Created the Synthase workspace at {folder}"),
+            (
+                "normal",
+                "raw/  plate reader exports, exactly as saved\n"
+                "maps/  plate maps (which compound is in which well)\n"
+                "results/  tables and figures Synthase makes\n"
+                "notebook/  your notebook entries\n"
+                "config.toml  every scientific value Synthase uses, all "
+                "unverified for now".replace("/", os.sep),
+            ),
+            (
+                "hint",
+                "Next: open config.toml and check each value against the literature.",
+            ),
+            ("normal", "Synthase will use this workspace from now on."),
+        ]
+        assert status_text(app).endswith("? 13 config values unverified")
+        assert all((folder / name).is_dir() for name in FOLDERS)
+        config.write_text("# checked by hand\n" + config.read_text("utf-8"), "utf-8")
+        before = config.read_text("utf-8")
+
+        # Again, answering no: the question shows in the bar, the config is kept.
+        await type_line(app, pilot, f"/init {folder}")
+        assert answering(app)
+        assert bar_question(app) == question
+        assert app.query_one("#bar").border_title == " Answering /init · Esc cancels "
+        await type_line(app, pilot, "no")
+        assert not answering(app)
+        assert messages(app)[-4][1] == f"{question} no"
+        assert messages(app)[-3] == (
+            "success",
+            f"Using the existing Synthase workspace at {folder}",
+        )
+        assert messages(app)[-2][1].endswith("config.toml  kept as it was")
+        assert config.read_text("utf-8") == before
+        assert list(folder.glob("config.toml.bak-*")) == []
+
+        # Again, answering yes: the old config is kept as a .bak copy.
+        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, "yes")
+        backups = list(folder.glob("config.toml.bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text("utf-8") == before
+        assert config.read_text("utf-8") == read_template()
+        assert messages(app)[-3][1].endswith(
+            f"the old one is saved as {backups[0].name}"
+        )
+
+        # Once more, cancelling with Esc: nothing is saved.
+        pointer.write_text("somewhere else\n", encoding="utf-8")
+        await type_line(app, pilot, f"/init {folder}")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not answering(app)
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        assert pointer.read_text("utf-8") == "somewhere else\n"
+        assert list(folder.glob("config.toml.bak-*")) == backups
+        assert config.read_text("utf-8") == read_template()
+        assert app.query_one("#command").placeholder == PLACEHOLDER
+
+    run(steps)
+
+
+def test_init_answers_only_yes_or_y_as_yes(tmp_path):
+    folder = tmp_path / "ws"
+    main(["init", str(folder)])
+
+    async def steps(app, pilot):
+        for reply in ["", "n", "maybe", "yes please"]:
+            await type_line(app, pilot, f"/init {folder}")
+            await type_line(app, pilot, reply)
+        assert list(folder.glob("config.toml.bak-*")) == []
+        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, " Y ")
+        assert len(list(folder.glob("config.toml.bak-*"))) == 1
+
+    run(steps)
+
+
+def test_init_with_no_path_uses_documents(tmp_path):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/init")
+        folder = (tmp_path / "Documents" / "Synthase-data").resolve()
+        assert messages(app)[1] == (
+            "success",
+            f"Created the Synthase workspace at {folder}",
+        )
+
+    run(steps)
+
+
+def test_init_refusing_the_code_folder_is_an_error():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/init .")
+        kind, text = messages(app)[-1]
+        assert kind == "error"
+        assert text.startswith("Synthase can't create the workspace there:")
+        assert not answering(app)
+
+    run(steps)
+
+
+def test_ctrl_c_cancels_a_question(tmp_path):
+    folder = tmp_path / "ws"
+    main(["init", str(folder)])
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, f"/init {folder}")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert not answering(app)
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        assert app.is_running
+
+    run(steps)
+
+
+def test_answers_are_not_kept_in_history_and_keys_wait(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, f"/init {folder}")
+        app.query_one("#command").value = "/he"
+        await pilot.press("tab", "up")
+        assert app.query_one("#command").value == "/he"
+        await type_line(app, pilot, "no")
+        assert app.history.lines == [f"/init {folder}"]
+
+    run(steps)
+
+
+def test_a_shared_question_list_explains_wrong_answers_and_skips(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    done = []
+
+    async def steps(app, pilot):
+        app.ask("/compound add", add_flow(folder), done.append, "Nothing was added.")
+        await pilot.pause()
+        assert messages(app)[-1] == (
+            "normal",
+            "New compound. Press Enter to skip any question except the label.",
+        )
+        # The label can't be skipped: Enter is explained and it is asked again.
+        await type_line(app, pilot, "")
+        assert messages(app)[-1][0] == "error"
+        assert bar_question(app) == "Label:"
+        await type_line(app, pilot, "invented-1")
+        assert bar_question(app).startswith("Class (")
+        # A wrong class is explained and asked again; Enter then skips it.
+        await type_line(app, pilot, "not a class")
+        assert messages(app)[-1][0] == "error"
+        assert bar_question(app).startswith("Class (")
+        await type_line(app, pilot, "")
+        assert bar_question(app) == "SMILES:"
+        for _ in range(3):  # SMILES, status, notes
+            await type_line(app, pilot, "")
+        # [y/N] questions: only yes or y is yes.
+        assert bar_question(app).endswith("[y/N]")
+        await type_line(app, pilot, "yep")
+        await type_line(app, pilot, "n")
+        await type_line(app, pilot, "")
+        assert not answering(app)
+
+    run(steps)
+    (answers,) = done
+    assert answers["label"] == "invented-1"
+    assert answers["compound_class"] is None
+    assert [answers[g] for g in ("Characterisation", "Handling", "Safety")] == [
+        False,
+        False,
+        False,
+    ]
+
+
+def test_answers_with_markup_characters_show_as_typed(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+
+    async def steps(app, pilot):
+        app.ask("/compound add", add_flow(folder), lambda answers: None, "x")
+        await pilot.pause()
+        await type_line(app, pilot, "[b]$x[/b]")
+        shown = str(app.query(".-answered .body").last().render())
+        assert shown == "Label: [b]$x[/b]"
 
     run(steps)
