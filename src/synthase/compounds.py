@@ -18,7 +18,7 @@ from synthase.config import Config
 from synthase.numbers import sig_figs
 
 REGISTER_NAME = "compounds.sqlite"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 CLASSES = ("Schiff base", "chalcone", "starting material", "other")
 STATUSES = ("planned", "synthesised", "purified", "characterised", "tested")
 DEFAULT_STATUS = STATUSES[0]
@@ -75,8 +75,13 @@ ALTER TABLE compounds ADD COLUMN risk_assessment TEXT;
 ALTER TABLE compounds ADD COLUMN hazards TEXT;
 """
 
+# Version 3 (#36): the kind of each linked spectrum.
+SPECTRA_SCHEMA = """
+ALTER TABLE spectra ADD COLUMN kind TEXT;
+"""
+
 # What takes the register to each version from the one before.
-UPGRADES = {1: SCHEMA, 2: DETAILS_SCHEMA}
+UPGRADES = {1: SCHEMA, 2: DETAILS_SCHEMA, 3: SPECTRA_SCHEMA}
 
 # The columns of a Compound, in order.
 COLUMNS = (
@@ -127,7 +132,15 @@ FIELD_NAMES = {
     "storage": "storage conditions",
     "risk_assessment": "risk assessment",
     "hazards": "hazard notes",
+    "batch": "batch",
+    "spectrum": "spectrum",
 }
+
+# The kinds of spectrum a linked file may be.
+SPECTRUM_KINDS = ("IR", "1H NMR", "13C NMR", "mass spec", "UV-vis", "other")
+
+# The units a batch's mass may be given in, with their size in grams.
+MASS_UNITS = {"mg": 0.001, "g": 1.0}
 
 # The units a DMSO stock concentration may be given in.
 STOCK_UNITS = ("mg/mL", "µg/mL", "mM")
@@ -170,6 +183,54 @@ class Stock:
 
     def __str__(self) -> str:
         return f"{self.value:g} {self.unit}"
+
+
+@dataclass(frozen=True)
+class Batch:
+    """One batch of a compound, numbered from 1 in the order added."""
+
+    number: int
+    made_on: str
+    mass_g: float | None = None
+    yield_percent: float | None = None
+
+    @property
+    def mass(self) -> str | None:
+        """The mass to 3 s.f., in mg below 1 g and in g from 1 g up."""
+        if self.mass_g is None:
+            return None
+        if self.mass_g < 1:
+            return f"{sig_figs(self.mass_g * 1000)} mg"
+        return f"{sig_figs(self.mass_g)} g"
+
+    @property
+    def yield_text(self) -> str | None:
+        if self.yield_percent is None:
+            return None
+        return f"{sig_figs(self.yield_percent)}%"
+
+    @property
+    def warning(self) -> str:
+        """A warning about the yield, or "" if there is nothing to say."""
+        if self.yield_percent is not None and self.yield_percent > 100:
+            return "A yield over 100% usually means the product is still wet or impure."
+        return ""
+
+    def __str__(self) -> str:
+        parts = [self.made_on, self.mass, self.yield_text]
+        return f"{self.number}: " + ", ".join(part for part in parts if part)
+
+
+@dataclass(frozen=True)
+class Spectrum:
+    """A spectra file linked to a compound, by its path in the workspace."""
+
+    path: str
+    kind: str | None
+    added: str
+
+    def __str__(self) -> str:
+        return self.path if self.kind is None else f"{self.kind} {self.path}"
 
 
 @dataclass(frozen=True)
@@ -235,7 +296,7 @@ def _choice(text: str, choices: tuple[str, ...], what: str) -> str | None:
     if not wanted:
         return None
     for choice in choices:
-        if _simplify(choice) == wanted:
+        if _simplify(choice.replace("-", " ")) == wanted:
             return choice
     raise CompoundError(
         f'"{text.strip()}" isn\'t a {what}. Choose one of: {", ".join(choices)}.'
@@ -365,25 +426,91 @@ def parse_risk_assessment(text: str) -> str:
             "Type the date the risk assessment was done instead of yes, "
             "such as 2026-10-18 or 18/10/2026."
         )
+    return _parse_date(text, "the risk assessment was done", ", or no").isoformat()
+
+
+def _parse_date(text: str, event: str, other: str = "") -> date:
+    """The past or present date ``text`` gives, as YYYY-MM-DD or DD/MM/YYYY.
+
+    ``event`` says what the date is of, as in "the batch was made".
+    """
+    text = text.strip()
     if match := re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", text):
         year, month, day = match.groups()
     elif match := re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text):
         day, month, year = match.groups()
     else:
         raise CompoundError(
-            f'"{text}" isn\'t a date. Type the date the risk assessment was done, '
-            "such as 2026-10-18 or 18/10/2026, or no."
+            f'"{text}" isn\'t a date. Type the date {event}, '
+            f"such as 2026-10-18 or 18/10/2026{other}."
         )
     try:
-        done = date(int(year), int(month), int(day))
+        when = date(int(year), int(month), int(day))
     except ValueError:
         raise CompoundError(f'"{text}" isn\'t a real date.') from None
-    if done > date.today():
+    _refuse_future(when, event)
+    return when
+
+
+def _refuse_future(when: date, event: str) -> None:
+    if when > date.today():
         raise CompoundError(
-            f"{done.isoformat()} is in the future. "
-            "Type the date the risk assessment was done."
+            f"{when.isoformat()} is in the future. Type the date {event}."
         )
-    return done.isoformat()
+
+
+def parse_batch_date(text: str) -> date:
+    """The date a batch was made: today if ``text`` is blank."""
+    if not text.strip():
+        return date.today()
+    return _parse_date(text, "the batch was made")
+
+
+def parse_mass(text: str) -> float:
+    """The mass ``text`` gives, such as ``152 mg``, in grams."""
+    units = " or ".join(MASS_UNITS)
+    match = re.fullmatch(rf"({NUMBER})\s*(\S*)", text.strip())
+    if match is None:
+        raise CompoundError(
+            f'"{text.strip()}" isn\'t a mass. Type a number and a unit ({units}), '
+            "such as 152 mg."
+        )
+    number, typed = match.groups()
+    if not typed:
+        raise CompoundError(f"Give the unit as well, {units}, such as 152 mg.")
+    if typed.casefold() not in MASS_UNITS:
+        raise CompoundError(f'"{typed}" isn\'t a unit Synthase knows. Use {units}.')
+    grams = float(number) * MASS_UNITS[typed.casefold()]
+    _check_mass(grams)
+    return grams
+
+
+def _check_mass(grams: float) -> None:
+    if grams <= 0:
+        raise CompoundError("The mass made must be above zero.")
+
+
+def _check_yield(percent: float) -> None:
+    if percent < 0:
+        raise CompoundError("A yield can't be below 0%.")
+
+
+def parse_yield(text: str) -> float:
+    """The percentage yield ``text`` gives, such as ``64.2`` or ``64.2%``."""
+    text = text.strip()
+    match = re.fullmatch(rf"(-?{NUMBER})\s*%?", text)
+    if match is None:
+        raise CompoundError(
+            f'"{text}" isn\'t a yield. Type a percentage, such as 64.2.'
+        )
+    percent = float(match.group(1))
+    _check_yield(percent)
+    return percent
+
+
+def parse_spectrum_kind(text: str) -> str | None:
+    """The kind of spectrum ``text`` names, or None if it is blank."""
+    return _choice(text, SPECTRUM_KINDS, "kind of spectrum")
 
 
 def _plain(text: str) -> str:
@@ -689,6 +816,113 @@ def _log(db: sqlite3.Connection, number: int, changes: list[Change]) -> None:
     )
 
 
+def add_batch(
+    workspace: Path,
+    text: str,
+    made_on: date | None = None,
+    mass_g: float | None = None,
+    yield_percent: float | None = None,
+) -> tuple[Compound, Batch]:
+    """Add a batch to compound ``text``, and log it, in one step.
+
+    The date defaults to today. A batch needs its mass, its yield or both.
+    Takes numbers rather than typed text, so /yield (M3) can call it.
+    """
+    compound = get_compound(workspace, text)
+    made_on = made_on or date.today()
+    _refuse_future(made_on, "the batch was made")
+    if mass_g is None and yield_percent is None:
+        raise CompoundError("A batch needs its mass made, its yield or both.")
+    if mass_g is not None:
+        _check_mass(mass_g)
+    if yield_percent is not None:
+        _check_yield(yield_percent)
+    with _open(workspace) as db:
+        (count,) = db.execute(
+            "SELECT COUNT(*) FROM batches WHERE compound_id = ?", (compound.number,)
+        ).fetchone()
+        batch = Batch(count + 1, made_on.isoformat(), mass_g, yield_percent)
+        db.execute(
+            "INSERT INTO batches (compound_id, made_on, mass_g, yield_percent) "
+            "VALUES (?, ?, ?, ?)",
+            (compound.number, batch.made_on, mass_g, yield_percent),
+        )
+        _log(db, compound.number, [Change("batch", None, str(batch))])
+    return compound, batch
+
+
+def compound_batches(workspace: Path, compound: Compound) -> list[Batch]:
+    """Every batch of ``compound``, in the order added."""
+    found = _read(
+        workspace,
+        "SELECT made_on, mass_g, yield_percent FROM batches "
+        "WHERE compound_id = ? ORDER BY id",
+        (compound.number,),
+    )
+    return [Batch(number, *row) for number, row in enumerate(found, start=1)]
+
+
+def link_spectrum(
+    workspace: Path, text: str, file: Path, kind: str | None = None
+) -> tuple[Compound, Spectrum]:
+    """Link the spectra file ``file`` to compound ``text``, and log it.
+
+    A relative ``file`` counts from the current folder, or from the workspace
+    if the current folder has no such file. It must be inside the workspace.
+    ``kind`` may be given in any form parse_spectrum_kind accepts.
+    """
+    compound = get_compound(workspace, text)
+    kind = parse_spectrum_kind(kind or "")
+    path = spectra_path(workspace, file)
+    with _open(workspace) as db:
+        for (linked,) in db.execute(
+            "SELECT path FROM spectra WHERE compound_id = ?", (compound.number,)
+        ):
+            if linked.casefold() == path.casefold():
+                raise CompoundError(f"{linked} is already linked to {compound.id}.")
+        spectrum = Spectrum(path, kind, _now())
+        db.execute(
+            "INSERT INTO spectra (compound_id, path, added, kind) VALUES (?, ?, ?, ?)",
+            (compound.number, path, spectrum.added, kind),
+        )
+        _log(db, compound.number, [Change("spectrum", None, str(spectrum))])
+    return compound, spectrum
+
+
+def spectra_path(workspace: Path, file: Path) -> str:
+    """``file``'s path inside the workspace, with / between folders.
+
+    A relative ``file`` counts from the current folder, or from the workspace
+    if the current folder has no such file.
+    """
+    file = Path(file).expanduser()
+    if not file.is_absolute() and not file.exists() and (workspace / file).exists():
+        file = workspace / file
+    file = file.resolve()
+    if not file.exists():
+        raise CompoundError(f"There's no file at {file}.")
+    if not file.is_file():
+        raise CompoundError(f"{file} is a folder, not a file.")
+    try:
+        inside = file.relative_to(workspace.resolve())
+    except ValueError:
+        raise CompoundError(
+            f"Spectra files must be inside the workspace ({workspace}). "
+            'Copy it in, for example into a "spectra" folder, then link it.'
+        ) from None
+    return inside.as_posix()
+
+
+def compound_spectra(workspace: Path, compound: Compound) -> list[Spectrum]:
+    """Every spectra file linked to ``compound``, in the order linked."""
+    found = _read(
+        workspace,
+        "SELECT path, kind, added FROM spectra WHERE compound_id = ? ORDER BY id",
+        (compound.number,),
+    )
+    return [Spectrum(*row) for row in found]
+
+
 def get_compound(workspace: Path, text: str) -> Compound:
     """The compound whose ID is ``text``, in any form parse_id accepts."""
     number = parse_id(text)
@@ -759,8 +993,16 @@ def list_compounds(
     ]
 
 
-def missing_fields(compound: Compound) -> list[str]:
-    """What is still blank in ``compound``, one plain sentence each."""
+def missing_fields(
+    compound: Compound,
+    batches: list[Batch] | None = None,
+    spectra: list[Spectrum] | None = None,
+) -> list[str]:
+    """What is still blank in ``compound``, one plain sentence each.
+
+    ``batches`` and ``spectra`` are its batches and linked files; None leaves
+    them out of the check.
+    """
     missing = []
     if compound.compound_class is None:
         missing.append("no class yet")
@@ -783,6 +1025,10 @@ def missing_fields(compound: Compound) -> list[str]:
             missing.append(blank)
         elif field == "risk_assessment" and compound.risk_assessment == "no":
             missing.append("risk assessment not done yet")
+    if batches == []:
+        missing.append("no batches yet")
+    if spectra == []:
+        missing.append("no spectra linked yet")
     return missing
 
 

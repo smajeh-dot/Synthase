@@ -3,13 +3,22 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+from datetime import date
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
 
 import synthase
 from synthase.cli import main
-from synthase.compounds import REGISTER_NAME, Compound, edit_compound, list_compounds
+from synthase.compounds import (
+    REGISTER_NAME,
+    Compound,
+    add_batch,
+    edit_compound,
+    link_spectrum,
+    list_compounds,
+)
 from synthase.workspace import code_folder
 
 
@@ -381,6 +390,8 @@ def test_show_prints_the_card_then_what_is_missing(workspace, capsys):
         "  no storage conditions yet\n"
         "  no risk assessment recorded\n"
         "  no hazard notes yet\n"
+        "  no batches yet\n"
+        "  no spectra linked yet\n"
     )
     assert main(["compound", "show", "2"]) == 0
     assert capsys.readouterr().out == (
@@ -400,6 +411,8 @@ def test_show_prints_the_card_then_what_is_missing(workspace, capsys):
         "  no storage conditions yet\n"
         "  no risk assessment recorded\n"
         "  no hazard notes yet\n"
+        "  no batches yet\n"
+        "  no spectra linked yet\n"
     )
 
 
@@ -407,6 +420,9 @@ def test_show_says_when_nothing_is_missing(workspace, capsys, invented_details):
     argv = ["compound", "add", "--label", "Test compound A", "--class", "other"]
     assert main([*argv, "--smiles", "C", "--notes", "invented"]) == 0
     edit_compound(workspace, "1", lambda change: True, **invented_details)
+    add_batch(workspace, "1", mass_g=0.1)
+    (workspace / "invented.csv").write_text("invented", encoding="utf-8")
+    link_spectrum(workspace, "1", workspace / "invented.csv")
     capsys.readouterr()
     assert main(["compound", "show", "SYN-001"]) == 0
     out = capsys.readouterr().out
@@ -904,6 +920,8 @@ def test_add_with_detail_flags_shows_each_group_and_the_purity_flag(workspace, c
         "  no class yet\n"
         "  no SMILES yet, so no formula or molar mass\n"
         "  no notes yet\n"
+        "  no batches yet\n"
+        "  no spectra linked yet\n"
     )
     assert list_compounds(workspace)[0].coloured is True
 
@@ -1025,3 +1043,135 @@ def test_add_with_an_impossible_detail_fails_and_saves_nothing(workspace, capsys
     assert main(argv) == 1
     assert 'An Rf value is between 0 and 1. "1.3" isn\'t.' in capsys.readouterr().err
     assert list_compounds(workspace) == []
+
+
+# --- Batches and spectra (#36) ---
+
+
+def test_batch_with_flags_prints_the_batch_and_a_status_hint(workspace, capsys):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    capsys.readouterr()
+    argv = ["compound", "batch", "1", "--date", "31/1/2020", "--mass", "152 mg"]
+    assert main([*argv, "--yield", "64.23"]) == 0
+    assert capsys.readouterr().out == (
+        "Added batch 1 to SYN-001: Test compound A\n"
+        "  1  2020-01-31  152 mg  64.2%\n"
+        'SYN-001 is still "planned". Change it with '
+        '"syn compound edit SYN-001 --status synthesised".\n'
+    )
+
+
+def test_batch_prompts_need_a_mass_or_a_yield(workspace, capsys, monkeypatch):
+    argv = ["compound", "add", "--label", "Test compound A", "--status", "purified"]
+    assert main(argv) == 0
+    capsys.readouterr()
+    prompts = answer(monkeypatch, "30/02/2020", "", "152", "", "", "104")
+    assert main(["compound", "batch", "1"]) == 0
+    date_prompt = "Date made (e.g. 2026-10-18): "
+    mass_prompt = "Mass made (e.g. 152 mg): "
+    yield_prompt = "Yield in % (e.g. 64.2): "
+    assert prompts == [
+        date_prompt,
+        date_prompt,
+        mass_prompt,
+        mass_prompt,
+        yield_prompt,
+        yield_prompt,
+    ]
+    out = capsys.readouterr().out
+    for message in (
+        '"30/02/2020" isn\'t a real date.',
+        "Give the unit as well, mg or g, such as 152 mg.",
+        "A batch needs its mass made, its yield or both.",
+        "A yield over 100% usually means the product is still wet or impure.",
+    ):
+        assert message in out
+    assert 'still "planned"' not in out
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--mass", "152"], "Give the unit as well"),
+        (["--yield", "-5"], "A yield can't be below 0%."),
+        (["--date", "2020-01-31"], "A batch needs its mass made, its yield or both."),
+    ],
+)
+def test_batch_with_a_wrong_flag_fails_and_saves_nothing(
+    workspace, capsys, flags, message
+):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    assert main(["compound", "batch", "1", *flags]) == 1
+    assert message in capsys.readouterr().err
+    assert main(["compound", "history", "1"]) == 0
+    assert "batch" not in capsys.readouterr().out
+
+
+def test_spectrum_with_a_file_links_it(workspace, capsys):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    capsys.readouterr()
+    (workspace / "spectra").mkdir()
+    (workspace / "spectra" / "invented IR.csv").write_text("x", encoding="utf-8")
+    file = workspace / "spectra" / "invented IR.csv"
+    assert main(["compound", "spectrum", "1", str(file), "--kind", "ir"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Linked to SYN-001: Test compound A\n")
+    assert f"  IR  {Path('spectra/invented IR.csv')}  (added " in out
+
+
+def test_spectrum_prompts_accept_a_dragged_in_path(workspace, capsys, monkeypatch):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    (workspace / "invented.csv").write_text("x", encoding="utf-8")
+    prompts = answer(
+        monkeypatch, "", "missing.csv", f'"{workspace / "invented.csv"}"', "uv vis"
+    )
+    assert main(["compound", "spectrum", "1"]) == 0
+    kind_prompt = "Kind (IR, 1H NMR, 13C NMR, mass spec, UV-vis, other): "
+    assert prompts == ["File: ", "File: ", "File: ", kind_prompt]
+    out = capsys.readouterr().out
+    assert "Type the file's path, or drag the file in." in out
+    assert "There's no file at" in out
+    assert "  UV-vis  invented.csv  (added " in out
+
+
+def test_spectrum_outside_the_workspace_or_without_a_file_is_refused(
+    workspace, tmp_path, capsys
+):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    outside = tmp_path / "invented.csv"
+    outside.write_text("x", encoding="utf-8")
+    assert main(["compound", "spectrum", "1", str(outside)]) == 1
+    assert "Spectra files must be inside the workspace" in capsys.readouterr().err
+    assert main(["compound", "spectrum", "1", "--kind", "IR"]) == 1
+    assert "Give the file to link" in capsys.readouterr().err
+
+
+def test_show_lists_batches_and_spectra(workspace, capsys):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    argv = ["compound", "batch", "1", "--date", "2020-01-31"]
+    assert main([*argv, "--mass", "152 mg", "--yield", "64.2"]) == 0
+    assert main([*argv, "--yield", "104"]) == 0
+    for name in ("invented IR.csv", "invented gone.csv"):
+        (workspace / name).write_text("x", encoding="utf-8")
+    assert main(["compound", "spectrum", "1", str(workspace / "invented IR.csv")]) == 0
+    argv = ["compound", "spectrum", "1", str(workspace / "invented gone.csv")]
+    assert main([*argv, "--kind", "13c nmr"]) == 0
+    (workspace / "invented gone.csv").unlink()
+    capsys.readouterr()
+    assert main(["compound", "show", "1"]) == 0
+    out = capsys.readouterr().out
+    added = date.today().isoformat()
+    assert (
+        "Batches\n"
+        "  1  2020-01-31  152 mg  64.2%\n"
+        "  2  2020-01-31  -       104%\n"
+        "  ! Batch 2: A yield over 100% usually means the product is still wet "
+        "or impure.\n"
+        "Spectra\n"
+        f"  -        invented IR.csv    (added {added})\n"
+        f"  13C NMR  invented gone.csv  (added {added})  (file not found)\n"
+        "\n"
+        "Still missing:\n"
+    ) in out
+    assert "no batches yet" not in out
+    assert "no spectra linked yet" not in out

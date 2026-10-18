@@ -2,6 +2,8 @@
 
 import sqlite3
 from contextlib import closing
+from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -9,27 +11,36 @@ from synthase import compounds
 from synthase.compounds import (
     REGISTER_NAME,
     SCHEMA_VERSION,
+    Batch,
     Change,
     Compound,
     CompoundError,
     MeltingRange,
     Stock,
+    add_batch,
     add_compound,
     archive_compound,
     check_label,
+    compound_batches,
     compound_history,
+    compound_spectra,
     edit_compound,
     get_compound,
+    link_spectrum,
     list_compounds,
     missing_fields,
+    parse_batch_date,
     parse_class,
     parse_id,
+    parse_mass,
     parse_melting_point,
     parse_rf,
     parse_risk_assessment,
+    parse_spectrum_kind,
     parse_status,
     parse_stock,
     parse_yes_no,
+    parse_yield,
     purity_warnings,
     read_smiles,
 )
@@ -721,3 +732,192 @@ def test_version_1_register_is_read_without_change_then_upgraded(tmp_path):
         ("label", "Test compound A"),
         ("melting_point", "455–457 K"),
     ]
+
+
+# --- Batches and spectra (#36) ---
+
+
+def test_new_register_has_the_spectrum_kind_column(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    columns = [row[1] for row in rows(tmp_path, "PRAGMA table_info(spectra)")]
+    assert columns == ["id", "compound_id", "path", "added", "kind"]
+
+
+@pytest.mark.parametrize(
+    ("text", "grams"),
+    [("152 mg", 0.152), ("1.5g", 1.5), ("0.2 G", 0.2), ("2500 MG", 2.5)],
+)
+def test_mass_is_read_in_grams(text, grams):
+    assert parse_mass(text) == pytest.approx(grams)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("152", "Give the unit as well, mg or g"),
+        ("1 kg", '"kg" isn\'t a unit Synthase knows. Use mg or g.'),
+        ("heavy", "isn't a mass"),
+    ],
+)
+def test_unusable_mass_is_refused(text, message):
+    with pytest.raises(CompoundError, match=message):
+        parse_mass(text)
+
+
+def test_yield_and_batch_date_are_read():
+    assert parse_yield("64.2%") == 64.2
+    with pytest.raises(CompoundError, match="can't be below 0%"):
+        parse_yield("-3")
+    with pytest.raises(CompoundError, match="must be above zero"):
+        parse_mass("0 mg")
+    with pytest.raises(CompoundError, match="isn't a yield. Type a percentage"):
+        parse_yield("good")
+    assert parse_batch_date("") == date.today()
+    assert parse_batch_date("31/1/2020") == date(2020, 1, 31)
+    with pytest.raises(CompoundError, match="Type the date the batch was made"):
+        parse_batch_date("yesterday")
+    with pytest.raises(CompoundError, match="isn't a real date"):
+        parse_batch_date("30/02/2020")
+
+
+def test_spectrum_kind_ignores_capitals_and_hyphens():
+    assert parse_spectrum_kind("uv vis") == "UV-vis"
+    assert parse_spectrum_kind("1h-nmr") == "1H NMR"
+    assert parse_spectrum_kind("") is None
+    with pytest.raises(CompoundError, match="isn't a kind of spectrum"):
+        parse_spectrum_kind("Raman")
+
+
+# Invented masses and yields; mass shows in mg below 1 g, in g from 1 g up.
+@pytest.mark.parametrize(
+    ("batch", "text"),
+    [
+        (Batch(1, "2020-01-31", 0.152, 64.23), "1: 2020-01-31, 152 mg, 64.2%"),
+        (Batch(2, "2020-02-01", 1.2345), "2: 2020-02-01, 1.23 g"),
+        (Batch(3, "2020-02-02", yield_percent=71), "3: 2020-02-02, 71.0%"),
+    ],
+)
+def test_batch_shows_mass_and_yield_to_3_sf(batch, text):
+    assert str(batch) == text
+
+
+def test_batches_are_numbered_per_compound_and_logged(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    add_compound(tmp_path, "Test compound B")
+    _, first = add_batch(tmp_path, "1", date(2020, 1, 31), 0.152, 64.2)
+    _, other = add_batch(tmp_path, "2", date(2020, 2, 1), yield_percent=50)
+    _, second = add_batch(tmp_path, "1", mass_g=0.2)
+    assert (first.number, other.number, second.number) == (1, 1, 2)
+    assert second.made_on == date.today().isoformat()
+    compound = get_compound(tmp_path, "1")
+    assert compound_batches(tmp_path, compound) == [first, second]
+    logged = [(c.name, c.old, c.new) for c in compound_history(tmp_path, "1")[1]]
+    assert logged[-2:] == [
+        ("batch", None, "1: 2020-01-31, 152 mg, 64.2%"),
+        ("batch", None, f"2: {date.today().isoformat()}, 200 mg"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("given", "message"),
+    [
+        ({}, "needs its mass made, its yield or both"),
+        ({"mass_g": 0}, "mass made must be above zero"),
+        ({"yield_percent": -1}, "can't be below 0%"),
+        (
+            {"made_on": date.today() + timedelta(days=1), "mass_g": 0.1},
+            "is in the future",
+        ),
+    ],
+)
+def test_impossible_batch_saves_nothing(tmp_path, given, message):
+    add_compound(tmp_path, "Test compound A")
+    with pytest.raises(CompoundError, match=message):
+        add_batch(tmp_path, "1", **given)
+    assert compound_batches(tmp_path, get_compound(tmp_path, "1")) == []
+
+
+def test_yield_over_100_percent_is_saved_with_a_warning(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    _, batch = add_batch(tmp_path, "1", yield_percent=104)
+    assert batch.warning.startswith("A yield over 100% usually means")
+    assert Batch(1, "2020-01-31", yield_percent=100).warning == ""
+
+
+def spectra_file(workspace, name="spectra/invented IR.csv"):
+    path = workspace / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("invented", encoding="utf-8")
+    return path
+
+
+def test_spectrum_is_linked_relative_to_the_workspace_and_logged(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    _, spectrum = link_spectrum(tmp_path, "1", spectra_file(tmp_path), "ir")
+    assert (spectrum.path, spectrum.kind) == ("spectra/invented IR.csv", "IR")
+    compound = get_compound(tmp_path, "1")
+    assert compound_spectra(tmp_path, compound) == [spectrum]
+    logged = compound_history(tmp_path, "1")[1][-1]
+    assert (logged.name, logged.new) == ("spectrum", "IR spectra/invented IR.csv")
+
+
+def test_relative_spectra_path_counts_from_the_current_folder_then_the_workspace(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    add_compound(workspace, "Test compound A")
+    spectra_file(workspace)
+    monkeypatch.chdir(workspace / "spectra")
+    _, here = link_spectrum(workspace, "1", Path("invented IR.csv"))
+    monkeypatch.chdir(tmp_path)
+    spectra_file(workspace, "nmr/invented.txt")
+    _, there = link_spectrum(workspace, "1", Path("nmr/invented.txt"))
+    assert (here.path, there.path) == ("spectra/invented IR.csv", "nmr/invented.txt")
+
+
+def test_unusable_spectra_file_is_refused(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    add_compound(workspace, "Test compound A")
+    with pytest.raises(CompoundError, match="There's no file at"):
+        link_spectrum(workspace, "1", workspace / "missing.csv")
+    with pytest.raises(CompoundError, match="is a folder, not a file"):
+        link_spectrum(workspace, "1", workspace)
+    outside = spectra_file(tmp_path, "elsewhere.csv")
+    with pytest.raises(CompoundError, match="must be inside the workspace"):
+        link_spectrum(workspace, "1", outside)
+    link_spectrum(workspace, "1", spectra_file(workspace))
+    with pytest.raises(CompoundError, match="is already linked to SYN-001"):
+        link_spectrum(workspace, "1", workspace / "spectra" / "invented IR.csv")
+    assert len(compound_spectra(workspace, get_compound(workspace, "1"))) == 1
+
+
+def test_missing_fields_names_no_batches_or_spectra_only_when_checked(tmp_path):
+    compound = Compound(1, "Test compound A")
+    assert "no batches yet" not in missing_fields(compound)
+    assert missing_fields(compound, [], [])[-2:] == [
+        "no batches yet",
+        "no spectra linked yet",
+    ]
+    assert missing_fields(compound, [Batch(1, "2020-01-31", 0.1)], [])[-1] == (
+        "no spectra linked yet"
+    )
+
+
+def test_version_2_register_upgrades_to_version_3(tmp_path):
+    with closing(sqlite3.connect(tmp_path / REGISTER_NAME)) as db:
+        db.executescript(
+            compounds.SCHEMA + compounds.DETAILS_SCHEMA + "PRAGMA user_version = 2;"
+        )
+        db.execute(
+            "INSERT INTO compounds (label, status, mp_low, mp_high) "
+            "VALUES ('Test compound A', 'planned', 455, 457)"
+        )
+        db.commit()
+    assert compound_spectra(tmp_path, get_compound(tmp_path, "1")) == []
+    link_spectrum(tmp_path, "1", spectra_file(tmp_path), "IR")
+    assert rows(tmp_path, "PRAGMA user_version") == [(SCHEMA_VERSION,)]
+    compound = get_compound(tmp_path, "1")
+    assert compound.melting_point == MeltingRange(455, 457)
+    assert compound_spectra(tmp_path, compound)[0].kind == "IR"
