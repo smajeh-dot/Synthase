@@ -81,6 +81,11 @@ The owner chose all the triage defaults below for #32 (2026-10-17). The prompt a
   - **No restore command.** A removal made by mistake is undone by adding the batch (under a new number) or linking the file again; an unlinked file can be linked again. The card shows the gap in the batch numbers with no extra line; the history explains it.
   - A removed batch can't be corrected or removed again: `Batch 2 of SYN-001 was removed on 2026-10-18.` An unknown number gives `SYN-001 has no batch 4. Its batches are 1 and 3.`
   - A spectrum's kind can't be corrected on its own: unlink the file and link it again with the right kind.
+- **Details settled for #50** (the owner chose the triage defaults, 2026-10-18):
+  - **Display text has its own module.** `synthase/compound_text.py` builds the card, the list's count line and the history lines. Like `compounds.py`, it never prints or asks anything. `cli.py` prints what it returns. `compounds.py` stays the part that reads and saves the register.
+  - **The app gets rows as well as lines.** `card()` gives a title, sections (a heading, then (name, value) rows or a table's cells, then any warnings) and the "Still missing" list. `card_lines()` turns that into the exact lines `syn compound show` prints. `history_rows()` and `history_lines()` do the same for the change log. The app can lay the rows out its own way (#57) and still use the same words.
+  - **The count line moves too.** `list_summary()` gives the line under the list table, or `No compounds match (…).` / `Every compound is archived. Add --all to see them.` when nothing is shown. `The register is empty. Add a compound with "syn compound add".` stays in `cli.py` because it names a command-line command.
+  - **One-line messages stay in `cli.py` for now.** `Added …`, `Saved … changes`, `Archived …`, `Restored …` and the confirmation questions don't move. The questions belong to #51, and the messages can follow when the app needs them.
 - **Wording:** after adding, `syn compound add` prints `Added SYN-001: <label>`, each filled field, and `Add more details later with "syn compound edit SYN-001".` That command arrives in #34.
 
 ## Consequences

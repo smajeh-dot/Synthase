@@ -8,6 +8,18 @@ from datetime import date
 from pathlib import Path
 
 from synthase import __version__
+from synthase.compound_text import (
+    aligned,
+    batch_cells,
+    card,
+    card_lines,
+    field_sections,
+    history_lines,
+    list_summary,
+    section_lines,
+    spectrum_cells,
+    spectrum_name,
+)
 from synthase.compounds import (
     CLASSES,
     CLEAR,
@@ -15,7 +27,6 @@ from synthase.compounds import (
     DETAIL_GROUPS,
     DETAIL_PARSERS,
     DETAILS,
-    FIELD_NAMES,
     SPECTRUM_KINDS,
     STATUSES,
     TABLE_HEADINGS,
@@ -23,14 +34,12 @@ from synthase.compounds import (
     Change,
     Compound,
     CompoundError,
-    Spectrum,
     add_batch,
     add_compound,
     archive_compound,
     as_text,
     check_label,
     check_rf,
-    compound_batches,
     compound_history,
     compound_spectra,
     edit_batch,
@@ -40,7 +49,6 @@ from synthase.compounds import (
     get_spectrum,
     link_spectrum,
     list_compounds,
-    missing_fields,
     parse_batch_date,
     parse_batch_value,
     parse_class,
@@ -49,7 +57,6 @@ from synthase.compounds import (
     parse_spectrum_kind,
     parse_status,
     parse_yield,
-    purity_warnings,
     read_smiles,
     remove_batch,
     spectra_path,
@@ -58,7 +65,6 @@ from synthase.compounds import (
 )
 from synthase.config import ConfigError, load_config
 from synthase.doctor import run_checks
-from synthase.numbers import sig_figs
 from synthase.tables import TableFolderError, place_table, write_csv
 from synthase.workspace import (
     DEFAULT_NAME,
@@ -618,30 +624,7 @@ def compound_show(text: str) -> int:
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
-    archived = " (archived)" if compound.archived else ""
-    print(f"{compound.id}: {compound.label}{archived}")
-    print_fields(compound, workspace)
-    batches = compound_batches(workspace, compound)
-    spectra = compound_spectra(workspace, compound)
-    if batches:
-        print("Batches")
-        for line in aligned([batch_cells(batch) for batch in batches]):
-            print(f"  {line}")
-        for batch in batches:
-            if batch.warning:
-                print(f"  ! Batch {batch.number}: {batch.warning}")
-    if spectra:
-        print("Spectra")
-        for line in aligned([spectrum_cells(s, workspace) for s in spectra]):
-            print(f"  {line}")
-    print()
-    missing = missing_fields(compound, batches, spectra)
-    if not missing:
-        print("Nothing missing.")
-        return 0
-    print("Still missing:")
-    for item in missing:
-        print(f"  {item}")
+    print_lines(card_lines(card(compound, workspace)))
     return 0
 
 
@@ -658,36 +641,16 @@ def compound_list(args: argparse.Namespace) -> int:
     if not everything:
         print('The register is empty. Add a compound with "syn compound add".')
         return 0
-    filters = ", ".join(
-        f"{name}: {value}"
-        for name, value in (
-            ("status", None if args.status is None else parse_status(args.status)),
-            ("class", parse_class(args.compound_class or "")),
-        )
-        if value is not None
+    summary = list_summary(
+        shown, everything, args.status, args.compound_class, archived=args.all
     )
-    hidden = 0 if args.all else sum(compound.archived for compound in everything)
     if not shown:
-        if filters:
-            print(f"No compounds match ({filters}).")
-        else:
-            print("Every compound is archived. Add --all to see them.")
+        print(summary)
         return 0
 
     rows = [table_row(compound) for compound in shown]
     print_table(TABLE_HEADINGS, rows)
-    total = len(everything) - hidden
-    count = f"{total} compound{'' if total == 1 else 's'}"
-    if filters:
-        count = f"{len(shown)} of {count}"
-    if hidden:
-        them = "it" if hidden == 1 else "them"
-        filters = "; ".join(
-            part
-            for part in (filters, f"{hidden} archived, hidden; add --all to see {them}")
-            if part
-        )
-    print(f"{count} ({filters})." if filters else f"{count}.")
+    print(summary)
     return 0 if args.csv is None else save_csv(args.csv, workspace, rows)
 
 
@@ -815,35 +778,18 @@ def compound_history_command(text: str) -> int:
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
-    print(f"History of {compound.id}: {compound.label}")
-    width = max((len(change.name) for change in changes), default=0)
-    for change in changes:
-        when = (change.changed or "")[:16].replace("T", " ")
-        old, new = (
-            "(blank)" if value is None else value for value in (change.old, change.new)
-        )
-        print(f"  {when}  {change.name:<{width}}  {old} -> {new}")
+    print_lines(history_lines(compound, changes))
     return 0
+
+
+def print_lines(lines: list[str]) -> None:
+    for line in lines:
+        print(line)
 
 
 def print_table(headings: tuple[str, ...], rows: list[tuple[str | None, ...]]) -> None:
     """Print a table in aligned columns, with - in each blank cell."""
-    for line in aligned([headings, *rows]):
-        print(line)
-
-
-def aligned(rows: list[tuple[str | None, ...]]) -> list[str]:
-    """``rows`` as lines of aligned columns, with - in each blank cell."""
-    cells = [[cell or "-" for cell in row] for row in rows]
-    widths = [
-        max(len(line[column]) for line in cells) for column in range(len(cells[0]))
-    ]
-    return [
-        "  ".join(
-            cell.ljust(width) for cell, width in zip(line, widths, strict=True)
-        ).rstrip()
-        for line in cells
-    ]
+    print_lines(aligned([headings, *rows]))
 
 
 def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) -> int:
@@ -875,54 +821,8 @@ def print_added(compound: Compound, workspace: Path) -> None:
 
 
 def print_fields(compound: Compound, workspace: Path) -> None:
-    """Print each filled field of ``compound``, one per line, then its details.
-
-    The details come under a heading for each group that has any.
-    """
-    molar_mass = (
-        None
-        if compound.molar_mass is None
-        else f"{sig_figs(compound.molar_mass)} g/mol"
-    )
-    for name, value in (
-        ("class", compound.compound_class),
-        ("SMILES", compound.smiles),
-        ("formula", compound.formula),
-        ("molar mass", molar_mass),
-        ("status", compound.status),
-        ("notes", compound.notes),
-    ):
-        if value is not None:
-            print(f"  {name:<13}{value}")
-    for group, fields in DETAIL_GROUPS:
-        lines = [
-            f"  {FIELD_NAMES[field]:<20}{detail_text(compound, field)}"
-            for field in fields
-            if getattr(compound, field) is not None
-        ]
-        if group == "Characterisation":
-            lines += [f"  {line}" for line in purity_lines(compound, workspace)]
-        if lines:
-            print(group)
-            print("\n".join(lines))
-
-
-def detail_text(compound: Compound, field: str) -> str | None:
-    if field == "risk_assessment" and compound.risk_assessment != "no":
-        return f"done on {compound.risk_assessment}"
-    if field == "risk_assessment":
-        return "not done"
-    return as_text(getattr(compound, field))
-
-
-def purity_lines(compound: Compound, workspace: Path) -> list[str]:
-    """The purity flag for ``compound``'s melting range, if it has one."""
-    if compound.melting_point is None:
-        return []
-    try:
-        return purity_warnings(compound, load_config(workspace))
-    except ConfigError as error:
-        return [f"The melting range can't be checked against the purity rule. {error}"]
+    """Print each filled field of ``compound``, then its details by group."""
+    print_lines(section_lines(field_sections(compound, workspace)))
 
 
 def compound_batch(args: argparse.Namespace) -> int:
@@ -986,10 +886,6 @@ def ask_batch(compound: Compound) -> tuple[date, float | None, float | None]:
 
     yield_percent = ask_until("Yield in % (e.g. 64.2): ", check_yield)
     return made_on, mass_g, yield_percent
-
-
-def batch_cells(batch: Batch) -> tuple[str | None, ...]:
-    return (str(batch.number), batch.made_on, batch.mass, batch.yield_text)
 
 
 def compound_edit_batch(args: argparse.Namespace) -> int:
@@ -1142,15 +1038,6 @@ def ask_spectrum(workspace: Path, compound: Compound) -> tuple[Path, str | None]
     return file, kind
 
 
-def spectrum_cells(spectrum: Spectrum, workspace: Path) -> tuple[str | None, ...]:
-    found = "" if (workspace / spectrum.path).is_file() else "  (file not found)"
-    return (
-        spectrum.kind,
-        str(Path(spectrum.path)),
-        f"(added {spectrum.added[:10]}){found}",
-    )
-
-
 def compound_unlink(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
@@ -1201,9 +1088,3 @@ def ask_linked(workspace: Path, compound: Compound) -> str:
         return linked[int(text) - 1].path
 
     return ask_until(f"Which one? ({choices}): ", check)
-
-
-def spectrum_name(spectrum: Spectrum) -> str:
-    """The kind and path of ``spectrum``, as the card shows them."""
-    path = str(Path(spectrum.path))
-    return path if spectrum.kind is None else f"{spectrum.kind} {path}"
