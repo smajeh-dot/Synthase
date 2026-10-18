@@ -1175,3 +1175,219 @@ def test_show_lists_batches_and_spectra(workspace, capsys):
     ) in out
     assert "no batches yet" not in out
     assert "no spectra linked yet" not in out
+
+
+# --- Correcting and removing batches and spectra links (#46) ---
+
+
+def three_batches(capsys):
+    """An invented compound with batches of 152 mg, 140 mg and 100 mg."""
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    for made_on, mass, percent in (
+        ("2020-01-31", "152 mg", "64.2"),
+        ("2020-02-01", "140 mg", "50"),
+        ("2020-02-02", "100 mg", None),
+    ):
+        argv = ["compound", "batch", "1", "--date", made_on, "--mass", mass]
+        assert main([*argv, *(["--yield", percent] if percent else [])]) == 0
+    capsys.readouterr()
+
+
+def test_correcting_batch_1_mass_asks_and_shows_in_the_history(
+    workspace, capsys, monkeypatch
+):
+    three_batches(capsys)
+    prompts = answer(monkeypatch, "y")
+    assert main(["compound", "edit-batch", "1", "1", "--mass", "125 mg"]) == 0
+    assert prompts == ['Change batch 1\'s mass from "152 mg" to "125 mg"? [y/N] ']
+    assert capsys.readouterr().out == (
+        "Saved 1 change to batch 1 of SYN-001: Test compound A\n"
+        "  1  2020-01-31  125 mg  64.2%\n"
+    )
+    assert main(["compound", "history", "1"]) == 0
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert last.endswith("  batch 1 mass  152 mg -> 125 mg")
+
+
+def test_batch_correction_is_refused_without_a_yes(workspace, capsys, monkeypatch):
+    three_batches(capsys)
+    answer(monkeypatch, "n")
+    assert main(["compound", "edit-batch", "1", "1", "--mass", "125 mg"]) == 0
+    assert capsys.readouterr().out.endswith(
+        'Kept batch 1\'s mass as "152 mg".\nNothing was changed.\n'
+    )
+    assert main(["compound", "show", "1"]) == 0
+    assert "  1  2020-01-31  152 mg  64.2%\n" in capsys.readouterr().out
+
+
+def test_edit_batch_prompts_show_current_values_and_ask_again(
+    workspace, capsys, monkeypatch
+):
+    three_batches(capsys)
+    prompts = answer(monkeypatch, "-", "", "152", "-", "-", "71", "y")
+    assert main(["compound", "edit-batch", "1", "3"]) == 0
+    date_prompt = "Date made [2020-02-02]: "
+    mass_prompt = "Mass made [100 mg]: "
+    assert prompts == [
+        date_prompt,
+        date_prompt,
+        mass_prompt,
+        mass_prompt,
+        "Yield in %: ",
+        "Yield in %: ",
+        'Clear batch 3\'s mass ("100 mg")? [y/N] ',
+    ]
+    out = capsys.readouterr().out
+    assert out.startswith(
+        "Editing batch 3 of SYN-001: Test compound A. Press Enter to keep a value, "
+        "or type - to clear the mass or yield.\n"
+    )
+    for message in (
+        "A batch always has a date, so it can't be cleared.",
+        "Give the unit as well, mg or g, such as 152 mg.",
+        "A batch needs its mass made, its yield or both.",
+    ):
+        assert message in out
+    assert out.endswith(
+        "Saved 2 changes to batch 3 of SYN-001: Test compound A\n"
+        "  3  2020-02-02  -  71.0%\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["1", "--mass", "152"], "Give the unit as well"),
+        (["1", "--mass", "-", "--yield", "-"], "needs its mass made, its yield"),
+        (["4", "--mass", "1 g"], "SYN-001 has no batch 4. Its batches are 1, 2 and 3."),
+        (["two", "--mass", "1 g"], '"two" isn\'t a batch number.'),
+    ],
+)
+def test_edit_batch_with_a_wrong_value_fails_and_saves_nothing(
+    workspace, capsys, argv, message
+):
+    three_batches(capsys)
+    assert main(["compound", "edit-batch", "1", *argv]) == 1
+    assert message in capsys.readouterr().err
+    assert main(["compound", "history", "1"]) == 0
+    assert "batch 1 " not in capsys.readouterr().out
+
+
+def test_removing_batch_2_needs_a_yes_and_batch_3_keeps_its_number(
+    workspace, capsys, monkeypatch
+):
+    three_batches(capsys)
+    question = (
+        "Remove batch 2 of SYN-001 (2020-02-01, 140 mg, 50.0%)? It is hidden from "
+        "the card but kept in the history, and the other batches keep their "
+        "numbers. [y/N] "
+    )
+    prompts = answer(monkeypatch, "")
+    assert main(["compound", "remove-batch", "1", "2"]) == 0
+    assert prompts == [question]
+    assert capsys.readouterr().out == "Kept batch 2 of SYN-001 as it was.\n"
+    answer(monkeypatch, "y")
+    assert main(["compound", "remove-batch", "1", "2"]) == 0
+    assert capsys.readouterr().out == (
+        "Removed batch 2 from SYN-001: Test compound A. "
+        'It stays in "syn compound history SYN-001".\n'
+    )
+    assert main(["compound", "show", "1"]) == 0
+    assert (
+        "Batches\n  1  2020-01-31  152 mg  64.2%\n  3  2020-02-02  100 mg  -\n"
+    ) in capsys.readouterr().out
+    assert main(["compound", "history", "1"]) == 0
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert " ".join(last.split()[2:]) == "batch 2: 2020-02-01, 140 mg, 50.0% -> removed"
+    assert main(["compound", "remove-batch", "1", "2"]) == 1
+    removed_on = date.today().isoformat()
+    assert capsys.readouterr().err == (
+        f"Batch 2 of SYN-001 was removed on {removed_on}.\n"
+    )
+
+
+def link_two(workspace, capsys):
+    """Link two invented spectra files to SYN-001, adding it if it isn't there."""
+    if not list_compounds(workspace):
+        assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    (workspace / "spectra").mkdir()
+    for name, kind in (("invented IR.csv", "IR"), ("invented UV.csv", "UV-vis")):
+        (workspace / "spectra" / name).write_text("x", encoding="utf-8")
+        argv = ["compound", "spectrum", "1", str(workspace / "spectra" / name)]
+        assert main([*argv, "--kind", kind]) == 0
+    capsys.readouterr()
+
+
+def test_unlink_with_a_file_needs_a_yes_and_leaves_the_file(
+    workspace, capsys, monkeypatch
+):
+    link_two(workspace, capsys)
+    shown = f"IR {Path('spectra/invented IR.csv')}"
+    question = f"Unlink {shown} from SYN-001? The file itself is not touched. [y/N] "
+    prompts = answer(monkeypatch, "n")
+    assert main(["compound", "unlink", "1", "spectra\\invented ir.csv"]) == 0
+    assert prompts == [question]
+    assert capsys.readouterr().out == f"Kept the link to {shown}.\n"
+    answer(monkeypatch, "y")
+    assert main(["compound", "unlink", "1", "spectra/invented IR.csv"]) == 0
+    assert capsys.readouterr().out == (
+        f"Unlinked {shown} from SYN-001: Test compound A.\n"
+    )
+    assert (workspace / "spectra" / "invented IR.csv").is_file()
+    assert main(["compound", "show", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "invented IR.csv" not in out
+    assert "invented UV.csv" in out
+    assert main(["compound", "history", "1"]) == 0
+    last = capsys.readouterr().out.splitlines()[-1]
+    assert (
+        " ".join(last.split()[2:]) == "spectrum IR spectra/invented IR.csv -> removed"
+    )
+
+
+def test_unlink_without_a_file_asks_which_one(workspace, capsys, monkeypatch):
+    link_two(workspace, capsys)
+    prompts = answer(monkeypatch, "3", "2", "y")
+    assert main(["compound", "unlink", "1"]) == 0
+    assert prompts[:2] == ["Which one? (1-2): ", "Which one? (1-2): "]
+    assert prompts[2].startswith("Unlink UV-vis ")
+    out = capsys.readouterr().out
+    assert out.startswith("Spectra linked to SYN-001: Test compound A\n  1  IR  ")
+    assert "\n  2  UV-vis  " in out
+    assert "Type the number of the file to unlink (1-2).\n" in out
+    assert main(["compound", "show", "1"]) == 0
+    assert "invented UV.csv" not in capsys.readouterr().out
+
+
+def test_an_unlinked_file_can_be_linked_again(workspace, capsys, monkeypatch):
+    link_two(workspace, capsys)
+    answer(monkeypatch, "y")
+    assert main(["compound", "unlink", "1", "spectra/invented IR.csv"]) == 0
+    file = workspace / "spectra" / "invented IR.csv"
+    assert main(["compound", "spectrum", "1", str(file), "--kind", "1H NMR"]) == 0
+    capsys.readouterr()
+    assert main(["compound", "show", "1"]) == 0
+    assert f"1H NMR  {Path('spectra/invented IR.csv')}" in capsys.readouterr().out
+
+
+def test_unlink_with_nothing_linked_or_a_wrong_file_fails(
+    workspace, capsys, monkeypatch
+):
+    assert main(["compound", "add", "--label", "Test compound A"]) == 0
+    capsys.readouterr()
+    assert main(["compound", "unlink", "1"]) == 1
+    assert capsys.readouterr().err == "SYN-001 has no spectra linked.\n"
+    link_two(workspace, capsys)
+    assert main(["compound", "unlink", "1", "elsewhere.csv"]) == 1
+    assert '"elsewhere.csv" isn\'t linked to SYN-001.' in capsys.readouterr().err
+
+
+def test_batch_and_link_correction_help_text(capsys):
+    for command, text in (
+        ("edit-batch", "Correct a batch's date, mass or yield. With no options,"),
+        ("remove-batch", "Remove a batch entered by mistake, after a yes."),
+        ("unlink", "Remove a spectra link made by mistake, after a yes."),
+    ):
+        with pytest.raises(SystemExit):
+            main(["compound", command, "--help"])
+        assert text in " ".join(capsys.readouterr().out.split())

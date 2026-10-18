@@ -226,9 +226,14 @@ class Batch:
             return "A yield over 100% usually means the product is still wet or impure."
         return ""
 
-    def __str__(self) -> str:
+    @property
+    def details(self) -> str:
+        """The date, mass and yield, such as "2026-10-18, 152 mg, 64.2%"."""
         parts = [self.made_on, self.mass, self.yield_text]
-        return f"{self.number}: " + ", ".join(part for part in parts if part)
+        return ", ".join(part for part in parts if part)
+
+    def __str__(self) -> str:
+        return f"{self.number}: {self.details}"
 
 
 @dataclass(frozen=True)
