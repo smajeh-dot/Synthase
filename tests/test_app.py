@@ -365,6 +365,19 @@ def test_doctor_with_config_toml_missing(tmp_path):
     run(steps)
 
 
+def test_status_line_with_config_toml_missing(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=2)
+    (folder / "config.toml").unlink()
+
+    async def steps(app, pilot):
+        expected = f"Workspace: {folder} · ✗ config.toml has a problem, run /doctor"
+        assert status_text(app) == expected
+        await type_line(app, pilot, "/doctor")
+        assert status_text(app) == expected
+
+    run(steps, size=(200, 30))
+
+
 def test_doctor_shows_fix_lines_as_plain_text(tmp_path):
     folder = doctor_workspace(tmp_path, unverified=0)
     config = folder / "config.toml"

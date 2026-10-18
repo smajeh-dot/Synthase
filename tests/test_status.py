@@ -2,6 +2,7 @@ from pathlib import Path
 
 from textual.content import Content
 
+from synthase.config import read_template
 from synthase.status import Status, read_status, shorten_path, status_markup
 from synthase.workspace import remember
 
@@ -23,7 +24,14 @@ def test_read_status_with_a_broken_config(tmp_path):
     assert read_status() == Status("problem", tmp_path)
 
 
+def test_read_status_without_config_toml(tmp_path):
+    # Not the template's values: decision 0010 never silently uses the template.
+    remember(tmp_path)
+    assert read_status() == Status("problem", tmp_path)
+
+
 def test_read_status_counts_unverified_values(tmp_path):
+    (tmp_path / "config.toml").write_text(read_template(), encoding="utf-8")
     remember(tmp_path)
     status = read_status()
     assert status.kind == "found"
