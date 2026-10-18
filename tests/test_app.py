@@ -598,3 +598,15 @@ def test_answers_with_markup_characters_show_as_typed(tmp_path):
         assert shown == "Label: [b]$x[/b]"
 
     run(steps)
+
+
+def test_esc_and_ctrl_c_do_nothing_without_a_question():
+    async def steps(app, pilot):
+        app.query_one("#command").value = "/he"
+        await pilot.press("escape", "ctrl+c")
+        await pilot.pause()
+        assert messages(app) == []
+        assert app.query_one("#command").value == "/he"
+        assert app.is_running
+
+    run(steps)
