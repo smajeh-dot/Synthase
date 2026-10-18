@@ -1,7 +1,6 @@
 """The ``syn`` command-line entry point."""
 
 import argparse
-import os
 import sys
 from collections.abc import Callable
 from functools import partial
@@ -70,6 +69,7 @@ from synthase.workspace import (
     WorkspaceError,
     create_workspace,
     current_workspace,
+    init_text,
 )
 
 INIT_HELP = (
@@ -159,13 +159,6 @@ LABEL_NEEDED = (
 
 # The fields add and edit take, as Compound attributes and option names.
 FIELDS = ("label", "compound_class", "smiles", "status", "notes", *DETAILS)
-
-WORKSPACE_CONTENTS = (
-    ("raw", "plate reader exports, exactly as saved"),
-    ("maps", "plate maps (which compound is in which well)"),
-    ("results", "tables and figures Synthase makes"),
-    ("notebook", "your notebook entries"),
-)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -434,23 +427,13 @@ def init(path: Path | None) -> int:
         print(error, file=sys.stderr)
         return 1
 
-    if created.config == "copied":
-        print(f"Created the Synthase workspace at {created.path}")
-        config_line = "every scientific value Synthase uses, all unverified for now"
-    else:
-        print(f"Using the existing Synthase workspace at {created.path}")
-        config_line = (
-            "kept as it was"
-            if created.config == "kept"
-            else "a fresh copy of the template; "
-            f"the old one is saved as {created.backup.name}"
-        )
-    for name, contents in WORKSPACE_CONTENTS:
-        print(f"  {name + os.sep:<12} {contents}")
-    print(f"  {'config.toml':<12} {config_line}")
-    if created.config != "kept":
-        print("Next: open config.toml and check each value against the literature.")
-    print("Synthase will use this workspace from now on.")
+    text = init_text(created)
+    print(text.first)
+    for name, contents in text.rows:
+        print(f"  {name:<12} {contents}")
+    if text.next is not None:
+        print(text.next)
+    print(text.last)
     return 0
 
 
