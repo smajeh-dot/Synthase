@@ -114,6 +114,68 @@ Screen {
 }
 .msg.-rows .rows > * { height: auto; }
 
+/* /compound show: the title, then each section under its heading with a blank
+   row above. Field names are muted; Batches and Spectra are aligned columns.
+   The last column wraps under itself. */
+.msg.-card > .body > *, .msg.-history > .body > * { height: auto; }
+.msg.-card .title, .msg.-card .heading, .msg.-history .title {
+    color: $heading;
+    text-style: bold;
+}
+.msg.-card .heading, .msg.-card .flag.-hint, .msg.-card .flag.-success {
+    margin-top: 1;
+}
+.msg.-card .rows {
+    height: auto;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-card .rows > * { height: auto; }
+.msg.-card .rows.-fields { grid-size: 2; grid-columns: auto 1fr; }
+.msg.-card .rows.-fields > .name { color: $muted; }
+.msg.-card .rows.-batches { grid-size: 4; grid-columns: auto auto auto 1fr; }
+.msg.-card .rows.-spectra { grid-size: 3; grid-columns: auto auto 1fr; }
+.msg.-card .flag > .glyph { width: 2; height: auto; text-style: bold; }
+.msg.-card .flag > .text { width: 1fr; height: auto; }
+.msg.-card .flag.-caution > .glyph { color: $caution; }
+.msg.-card .flag.-warning > .glyph { color: $warning; }
+.msg.-card .flag.-hint > * { color: $muted; }
+.msg.-card .flag.-success > * { color: $success; }
+.msg.-card .missing { padding-left: 2; }
+
+/* /compound list: a bold heading row over a thin line, then one row per
+   compound. The label column wraps; archived rows are muted. */
+.msg.-table > .rows {
+    height: auto;
+    grid-size: 6;
+    /* The label takes most of the room left; the molar mass the rest, so at
+       80 columns its heading wraps before the labels squeeze. */
+    grid-columns: auto 3fr auto auto auto 2fr;
+    grid-rows: auto;
+    grid-gutter: 0 0;
+}
+.msg.-table .rows > * { width: 1fr; height: auto; padding-right: 2; }
+/* Every heading fills its row, so the line under them stays straight when one
+   wraps. */
+.msg.-table .rows > .heading {
+    height: 100%;
+    color: $heading;
+    text-style: bold;
+    border-bottom: solid $line;
+}
+.msg.-table .cell.-archived { color: $muted; }
+
+/* /compound history: the title, then when (muted), what, and old → new. */
+.msg.-history .rows {
+    height: auto;
+    grid-size: 3;
+    grid-columns: auto auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-history .rows > * { height: auto; }
+.msg.-history .when { color: $muted; }
+
 /* Bottom block: rule, input, rule, then the status line. While a question is
    open the question sits above the input and the block grows to fit it. */
 #bottom {

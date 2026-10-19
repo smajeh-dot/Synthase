@@ -4,6 +4,7 @@ The layout, wording and styling rules are in docs/decisions/0016-full-screen-app
 All styling is in synthase.tcss and theme.py; nothing here names a colour.
 """
 
+import argparse
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,16 +17,57 @@ from textual.markup import escape
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
-from synthase.commands import HELP, HelpPage, command_list, complete, find, help_page
+from synthase.commands import (
+    HELP,
+    USAGE_HINT,
+    HelpPage,
+    UsageError,
+    command_list,
+    complete,
+    find,
+    help_page,
+    parse_command,
+    split_words,
+)
 from synthase.compound_questions import Answers, Flow, Question, is_yes, text_only
-from synthase.compounds import CompoundError
+from synthase.compound_text import (
+    EMPTY_REGISTER,
+    Card,
+    Section,
+    card,
+    card_lines,
+    history_rows,
+    list_summary,
+    screen_dates,
+)
+from synthase.compounds import (
+    TABLE_HEADINGS,
+    Change,
+    Compound,
+    CompoundError,
+    compound_history,
+    get_compound,
+    list_compounds,
+    table_row,
+)
+from synthase.config import ConfigError, load_config
 from synthase.doctor import Check, ReportText, report_text, run_checks
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
+from synthase.tables import (
+    TableFolderError,
+    kept_text,
+    not_saved_text,
+    place_table,
+    replace_question,
+    saved_text,
+    write_csv,
+)
 from synthase.theme import SYNTHASE
 from synthase.workspace import (
     WorkspaceError,
     create_workspace,
+    current_workspace,
     init_text,
     workspace_target,
 )
@@ -33,12 +75,15 @@ from synthase.workspace import (
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#57 to #59).
+# For a syn command whose app version hasn't been built yet (#58 and #59).
 NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
 INIT = "init"
+COMPOUND = "compound"
+# The /compound commands the app runs so far.
+COMPOUND_IN_APP = ("show", "list", "history")
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -174,6 +219,117 @@ class Rows(Message):
                 yield Static(text, classes="text", markup=False)
 
 
+def flagged(line: str) -> tuple[str, str]:
+    """A card warning's kind and text: "! …" is a caution, "Warning: …" a warning."""
+    if line.startswith("! "):
+        return "caution", line[2:]
+    return ("warning" if line.startswith("Warning:") else "caution"), line
+
+
+class Flag(HorizontalGroup):
+    """A warning inside a card: its symbol column, then the text."""
+
+    def __init__(self, kind: str, text: str) -> None:
+        super().__init__(classes=f"flag -{kind}")
+        self.kind = kind
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        yield Label(GLYPHS[self.kind], classes="glyph", markup=False)
+        yield Static(self.text, classes="text", markup=False)
+
+
+class CardMessage(Message):
+    """A compound's card: the title, each section, then what is still missing.
+
+    Dates are shown DD/MM/YYYY. The text is the card as syn prints it.
+    """
+
+    def __init__(self, shown: Card) -> None:
+        super().__init__("normal", "\n".join(card_lines(shown)))
+        self.add_class("-card")
+        self.card = shown
+
+    @staticmethod
+    def cells(section: Section) -> list[tuple[str, ...]]:
+        return [
+            tuple(screen_dates(cell or "-") for cell in row) for row in section.rows
+        ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.card.title, classes="title", markup=False)
+            for section in self.card.sections:
+                if section.heading is not None:
+                    yield Static(section.heading, classes="heading", markup=False)
+                rows = self.cells(section)
+                if rows:
+                    # Batches and Spectra each have their own number of columns.
+                    kind = section.heading.lower() if section.table else "fields"
+                    with Grid(classes=f"rows -{kind}"):
+                        for row in rows:
+                            *first, last = row
+                            for cell in first:
+                                yield Label(cell, classes="name", markup=False)
+                            # The last column wraps, so a long value stays in it.
+                            yield Static(last, classes="value", markup=False)
+                for line in section.warnings:
+                    yield Flag(*flagged(screen_dates(line)))
+            if self.card.missing:
+                yield Flag("hint", "Still missing:")
+                for item in self.card.missing:
+                    yield Static(item, classes="missing", markup=False)
+            else:
+                yield Flag("success", "Nothing missing.")
+
+
+class CompoundTable(Message):
+    """The compound list: a heading row, then one row per compound."""
+
+    def __init__(self, compounds: list[Compound]) -> None:
+        self.compounds = compounds
+        self.rows = [table_row(compound) for compound in compounds]
+        lines = [
+            "  ".join(cell or "-" for cell in row)
+            for row in [TABLE_HEADINGS, *self.rows]
+        ]
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-table")
+
+    def compose(self) -> ComposeResult:
+        with Grid(classes="body rows"):
+            for heading in TABLE_HEADINGS:
+                yield Label(heading, classes="heading", markup=False)
+            for compound, row in zip(self.compounds, self.rows, strict=True):
+                archived = " -archived" if compound.archived else ""
+                for cell in row:
+                    yield Label(cell or "-", classes=f"cell{archived}", markup=False)
+
+
+class ChangeLog(Message):
+    """A compound's change log: when, what, then old → new, oldest first."""
+
+    def __init__(self, compound: Compound, changes: list[Change]) -> None:
+        self.title = f"History of {compound.id}: {compound.label}"
+        self.rows = [
+            (screen_dates(when), name, screen_dates(f"{old} → {new}"))
+            for when, name, old, new in history_rows(changes)
+        ]
+        lines = [self.title, *("  ".join(row) for row in self.rows)]
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-history")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.title, classes="title", markup=False)
+            if self.rows:
+                with Grid(classes="rows"):
+                    for when, name, change in self.rows:
+                        yield Label(when, classes="when", markup=False)
+                        yield Label(name, classes="name", markup=False)
+                        yield Static(change, classes="change", markup=False)
+
+
 @dataclass
 class Asking:
     """A command's open questions: the flow, the answers so far and what's next.
@@ -298,6 +454,8 @@ class SynthaseApp(App):
             self.run_doctor()
         elif command.name == INIT:
             self.run_init(text.split(maxsplit=1)[1:])
+        elif command.name == COMPOUND:
+            self.run_compound(text)
         else:
             self.say("error", NOT_YET.format(name=command.name))
 
@@ -360,6 +518,95 @@ class SynthaseApp(App):
         self.refresh_status()
         # History lives in the workspace, so it follows the new one.
         self.history = History.load(history_file())
+
+    def run_compound(self, text: str) -> None:
+        """/compound show, list and history, read as syn compound reads them."""
+        try:
+            words = split_words(text)[1:]
+        except UsageError as error:
+            self.say("error", str(error))
+            return
+        if not words:
+            self.show_help([COMPOUND])
+            return
+        name = words[0] = words[0].lower()
+        if name not in self.commands.subcommands[COMPOUND].subcommands:
+            self.say("error", UNKNOWN)
+        elif name not in COMPOUND_IN_APP:
+            self.say("error", NOT_YET.format(name=f"{COMPOUND} {name}"))
+        elif "-h" in words or "--help" in words:
+            self.show_help([COMPOUND, name])
+        else:
+            try:
+                args = parse_command([COMPOUND, *words])
+            except UsageError as error:
+                self.say("error", str(error))
+                self.say("hint", USAGE_HINT.format(topic=f"{COMPOUND} {name}"))
+                return
+            try:
+                self.compound_command(args)
+            except (WorkspaceError, CompoundError) as error:
+                self.say("error", in_app(str(error)))
+
+    def compound_command(self, args: argparse.Namespace) -> None:
+        workspace = current_workspace()
+        if args.compound_command == "show":
+            self.show(CardMessage(card(get_compound(workspace, args.id), workspace)))
+        elif args.compound_command == "history":
+            self.show(ChangeLog(*compound_history(workspace, args.id)))
+        else:
+            self.list_compounds(args, workspace)
+
+    def list_compounds(self, args: argparse.Namespace, workspace: Path) -> None:
+        shown = list_compounds(
+            workspace, args.status, args.compound_class, archived=args.all
+        )
+        everything = list_compounds(workspace, archived=True)
+        if not everything:
+            self.say("normal", EMPTY_REGISTER)
+            return
+        summary = list_summary(
+            shown, everything, args.status, args.compound_class, archived=args.all
+        )
+        if not shown:
+            self.say("normal", summary)
+            return
+        table = CompoundTable(shown)
+        self.show(table)
+        self.say("normal", summary)
+        if args.csv is not None:
+            self.save_table(args.csv, workspace, table.rows)
+
+    def save_table(self, name: Path, workspace: Path, rows: list[tuple]) -> None:
+        """Save the list as CSV where decision 0015 says, asking before a replace."""
+        try:
+            path = place_table(name, workspace, load_config(workspace), "compounds")
+        except (ConfigError, TableFolderError) as error:
+            self.say("error", str(error))
+            return
+        if not path.exists():
+            self.write_table(path, rows)
+            return
+        question = Question(
+            "replace", replace_question(path), text_only(is_yes), yes_no=True
+        )
+
+        def done(answers: Answers) -> None:
+            if answers["replace"]:
+                self.write_table(path, rows)
+            else:
+                self.say("normal", kept_text(path))
+
+        flow = Flow((), (question,))
+        self.ask("/compound list", flow, done, "The table was not saved.")
+
+    def write_table(self, path: Path, rows: list[tuple]) -> None:
+        try:
+            write_csv(path, TABLE_HEADINGS, rows)
+        except OSError as error:
+            self.say("error", not_saved_text(path, error))
+            return
+        self.say("success", saved_text(path))
 
     def ask(
         self,
@@ -458,6 +705,17 @@ class SynthaseApp(App):
             output.scroll_page_up()
         else:
             output.scroll_page_down()
+
+
+# Shared messages name syn commands; in the app they name its own.
+IN_APP = (('"syn compound list"', '"/compound list"'), ('"syn init"', '"/init"'))
+
+
+def in_app(message: str) -> str:
+    """A shared message, pointing at the app's own command where it has one."""
+    for syn, app in IN_APP:
+        message = message.replace(syn, app)
+    return message
 
 
 def main(argv: list[str] | None = None) -> int:
