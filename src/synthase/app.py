@@ -7,7 +7,8 @@ All styling is in synthase.tcss and theme.py; nothing here names a colour.
 import argparse
 import sys
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -36,43 +37,75 @@ from synthase.compound_questions import (
     Flow,
     Question,
     add_flow,
+    archive_question,
+    batch_flow,
     compound_answers,
     confirm_flow,
     confirmed,
+    edit_batch_flow,
     edit_flow,
     is_yes,
+    remove_batch_question,
+    spectrum_flow,
     text_only,
+    unlink_flow,
+    unlink_question,
 )
 from synthase.compound_text import (
     EMPTY_REGISTER,
     LABEL_NEEDED,
     NOTHING_ADDED,
     NOTHING_CHANGED,
+    NOTHING_LINKED,
     Card,
     Section,
     added_text,
+    aligned,
+    archived_text,
+    batch_added_text,
+    batch_cells,
+    batch_removed_text,
+    batch_saved_text,
     card,
     card_lines,
     field_sections,
+    file_needed_text,
     history_rows,
+    linked_text,
     list_summary,
     more_details_text,
+    restored_text,
     saved_changes_text,
     screen_dates,
     section_lines,
+    spectrum_cells,
+    still_planned_text,
+    unlinked_text,
 )
 from synthase.compounds import (
     TABLE_HEADINGS,
+    Batch,
     Change,
     Compound,
     CompoundError,
+    add_batch,
     add_compound,
+    archive_compound,
+    check_archive,
     compound_history,
+    edit_batch,
     edit_compound,
+    get_batch,
     get_compound,
+    get_spectrum,
+    link_spectrum,
     list_compounds,
+    parse_batch,
+    planned_batch_changes,
     planned_changes,
+    remove_batch,
     table_row,
+    unlink_spectrum,
 )
 from synthase.config import ConfigError, load_config
 from synthase.doctor import Check, ReportText, report_text, run_checks
@@ -99,15 +132,11 @@ from synthase.workspace import (
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#59).
-NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
 INIT = "init"
 COMPOUND = "compound"
-# The /compound commands the app runs so far.
-COMPOUND_IN_APP = ("add", "edit", "show", "list", "history")
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -304,21 +333,42 @@ def section_widgets(sections: Iterable[Section]) -> Iterator[Widget]:
     for section in sections:
         if section.heading is not None:
             yield Static(section.heading, classes="heading", markup=False)
-        rows = [
-            tuple(screen_dates(cell or "-") for cell in row) for row in section.rows
-        ]
-        if rows:
+        if section.rows:
             # Batches and Spectra each have their own number of columns.
             kind = section.heading.lower() if section.table else "fields"
-            with Grid(classes=f"rows -{kind}"):
-                for row in rows:
-                    *first, last = row
-                    for cell in first:
-                        yield Label(cell, classes="name", markup=False)
-                    # The last column wraps, so a long value stays in it.
-                    yield Static(last, classes="value", markup=False)
+            yield row_grid(kind, section.rows)
         for line in section.warnings:
             yield Flag(*flagged(screen_dates(line)))
+
+
+def screen_rows(rows: Iterable[tuple[str | None, ...]]) -> list[tuple[str, ...]]:
+    """``rows`` with - in each blank cell and dates DD/MM/YYYY."""
+    return [tuple(screen_dates(cell or "-") for cell in row) for row in rows]
+
+
+def row_grid(kind: str, rows: Iterable[tuple[str | None, ...]]) -> Grid:
+    """``rows`` in the card's columns for ``kind``: fields, batches or spectra."""
+    cells = []
+    for row in screen_rows(rows):
+        *first, last = row
+        cells += [Label(cell, classes="name", markup=False) for cell in first]
+        # The last column wraps, so a long value stays in it.
+        cells.append(Static(last, classes="value", markup=False))
+    return Grid(*cells, classes=f"rows -{kind}")
+
+
+class CardRows(Message):
+    """Batches or spectra in the card's columns, e.g. after adding a batch."""
+
+    def __init__(self, kind: str, rows: list[tuple[str | None, ...]]) -> None:
+        super().__init__("normal", "\n".join(aligned(screen_rows(rows))))
+        self.add_class("-card")
+        self.columns = kind
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield row_grid(self.columns, self.rows)
 
 
 class CompoundTable(Message):
@@ -494,14 +544,18 @@ class SynthaseApp(App):
             self.run_init(text.split(maxsplit=1)[1:])
         elif command.name == COMPOUND:
             self.run_compound(text)
-        else:
-            self.say("error", NOT_YET.format(name=command.name))
 
     def show_help(self, topic: list[str]) -> None:
         page = help_page(topic, self.commands)
         if page.error:
             self.say("error", page.error)
             return
+        # The help is syn's; in the app it names the app's own commands.
+        page = replace(
+            page,
+            paragraphs=tuple(in_app(paragraph) for paragraph in page.paragraphs),
+            rows=tuple((name, in_app(text)) for name, text in page.rows),
+        )
         self.show(HelpMessage(page))
         if page.hint:
             self.say("hint", page.hint)
@@ -570,8 +624,6 @@ class SynthaseApp(App):
         name = words[0] = words[0].lower()
         if name not in self.commands.subcommands[COMPOUND].subcommands:
             self.say("error", UNKNOWN)
-        elif name not in COMPOUND_IN_APP:
-            self.say("error", NOT_YET.format(name=f"{COMPOUND} {name}"))
         elif "-h" in words or "--help" in words:
             self.show_help([COMPOUND, name])
         else:
@@ -596,6 +648,21 @@ class SynthaseApp(App):
             self.show(CardMessage(card(get_compound(workspace, args.id), workspace)))
         elif args.compound_command == "history":
             self.show(ChangeLog(*compound_history(workspace, args.id)))
+        elif args.compound_command == "archive":
+            self.run_archive(args.id, workspace)
+        elif args.compound_command == "restore":
+            compound = archive_compound(workspace, args.id, archived=False)
+            self.say("success", in_app(restored_text(compound)))
+        elif args.compound_command == "batch":
+            self.run_batch(args, workspace)
+        elif args.compound_command == "edit-batch":
+            self.run_edit_batch(args, workspace)
+        elif args.compound_command == "remove-batch":
+            self.run_remove_batch(args, workspace)
+        elif args.compound_command == "spectrum":
+            self.run_spectrum(args, workspace)
+        elif args.compound_command == "unlink":
+            self.run_unlink(args, workspace)
         else:
             self.list_compounds(args, workspace)
 
@@ -678,6 +745,172 @@ class SynthaseApp(App):
         self.say("success", saved_changes_text(compound, changes))
         self.show(Fields(field_sections(compound, workspace)))
 
+    def run_archive(self, text: str, workspace: Path) -> None:
+        """Archive a compound after a yes, as syn compound archive does."""
+        compound = get_compound(workspace, text)
+        check_archive(compound)
+
+        def archive() -> None:
+            archive_compound(workspace, text)
+            self.say("success", in_app(archived_text(compound)))
+
+        self.confirm("/compound archive", archive_question(compound), archive)
+
+    def run_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Add a batch as syn compound batch does: from options, or by asking."""
+        compound = get_compound(workspace, args.id)
+        flags = (args.date, args.mass, args.yield_percent)
+        if any(flag is not None for flag in flags):
+            self.finish_batch(workspace, args.id, *parse_batch(*flags))
+            return
+
+        def done(answers: Answers) -> None:
+            self.finish_batch(
+                workspace,
+                args.id,
+                answers["made_on"],
+                answers["mass_g"],
+                answers["yield_percent"],
+            )
+
+        self.ask("/compound batch", batch_flow(compound), done, NOTHING_ADDED)
+
+    def finish_batch(
+        self,
+        workspace: Path,
+        text: str,
+        made_on: date,
+        mass_g: float | None,
+        yield_percent: float | None,
+    ) -> None:
+        compound, batch = add_batch(workspace, text, made_on, mass_g, yield_percent)
+        self.say("success", batch_added_text(compound, batch))
+        self.show_batch(batch)
+        if planned := still_planned_text(compound):
+            self.say("hint", in_app(planned))
+
+    def show_batch(self, batch: Batch) -> None:
+        """``batch`` in the card's Batches columns, then any warning about it."""
+        self.show(CardRows("batches", [batch_cells(batch)]))
+        if batch.warning:
+            self.say("caution", batch.warning)
+
+    def run_edit_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Correct a batch as syn compound edit-batch does: from options, or by asking.
+
+        Every confirmation is asked before edit_batch saves anything.
+        """
+        compound, batch = get_batch(workspace, args.id, args.batch)
+        flags = {
+            "made_on": args.date,
+            "mass": args.mass,
+            "yield_percent": args.yield_percent,
+        }
+        if any(flag is not None for flag in flags.values()):
+            self.confirm_batch(workspace, args, flags)
+            return
+
+        def done(answers: Answers) -> None:
+            self.confirm_batch(workspace, args, answers)
+
+        flow = edit_batch_flow(compound, batch)
+        self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+
+    def confirm_batch(
+        self, workspace: Path, args: argparse.Namespace, values: Answers
+    ) -> None:
+        changes = planned_batch_changes(workspace, args.id, args.batch, **values)
+
+        def done(answers: Answers) -> None:
+            allowed = confirmed(changes, answers)
+            compound, batch, saved = edit_batch(
+                workspace, args.id, args.batch, allowed.__contains__, **values
+            )
+            if not saved:
+                self.say("normal", NOTHING_CHANGED)
+                return
+            self.say("success", batch_saved_text(compound, batch, saved))
+            self.show_batch(batch)
+
+        flow = confirm_flow(changes)
+        if flow.questions:
+            self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+        else:
+            done({})
+
+    def run_remove_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Remove a batch after a yes, as syn compound remove-batch does."""
+        compound, batch = get_batch(workspace, args.id, args.batch)
+
+        def remove() -> None:
+            remove_batch(workspace, args.id, args.batch)
+            self.say("success", in_app(batch_removed_text(compound, batch)))
+
+        question = remove_batch_question(compound, batch)
+        self.confirm("/compound remove-batch", question, remove)
+
+    def run_spectrum(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Link a spectra file as syn compound spectrum does: given, or by asking."""
+        compound = get_compound(workspace, args.id)
+        if args.file is not None:
+            self.finish_link(workspace, args.id, args.file, args.kind)
+            return
+        if args.kind is not None:
+            raise CompoundError(file_needed_text(compound))
+
+        def done(answers: Answers) -> None:
+            self.finish_link(workspace, args.id, answers["file"], answers["kind"])
+
+        flow = spectrum_flow(workspace, compound)
+        self.ask("/compound spectrum", flow, done, NOTHING_LINKED)
+
+    def finish_link(
+        self, workspace: Path, text: str, file: Path, kind: str | None
+    ) -> None:
+        compound, spectrum = link_spectrum(workspace, text, file, kind)
+        self.say("success", linked_text(compound))
+        self.show(CardRows("spectra", [spectrum_cells(spectrum, workspace)]))
+
+    def run_unlink(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Unlink a spectra file after a yes, as syn compound unlink does.
+
+        With no file, the linked files are listed and the app asks which one.
+        """
+        compound = get_compound(workspace, args.id)
+        if args.file is not None:
+            self.confirm_unlink(workspace, args.id, args.file)
+            return
+
+        def done(answers: Answers) -> None:
+            self.confirm_unlink(workspace, args.id, answers["file"])
+
+        flow = unlink_flow(workspace, compound)
+        self.ask("/compound unlink", flow, done, NOTHING_CHANGED)
+
+    def confirm_unlink(self, workspace: Path, text: str, file: str) -> None:
+        compound, spectrum = get_spectrum(workspace, text, file)
+
+        def unlink() -> None:
+            unlink_spectrum(workspace, text, file)
+            self.say("success", unlinked_text(compound, spectrum))
+
+        question = unlink_question(compound, spectrum)
+        self.confirm("/compound unlink", question, unlink)
+
+    def confirm(
+        self, command: str, question: Question, then: Callable[[], None]
+    ) -> None:
+        """Ask the [y/N] ``question``, then call ``then`` after a yes.
+
+        Anything else shows the question's kept line, and Esc changes nothing.
+        """
+
+        def done(answers: Answers) -> None:
+            if answers[question.key]:
+                then()
+
+        self.ask(command, Flow((), (question,)), done, NOTHING_CHANGED)
+
     def list_compounds(self, args: argparse.Namespace, workspace: Path) -> None:
         shown = list_compounds(
             workspace, args.status, args.compound_class, archived=args.all
@@ -741,7 +974,7 @@ class SynthaseApp(App):
         Esc or Ctrl+C cancels and says ``nothing``, and ``done`` isn't called.
         """
         for line in flow.opening:
-            self.say("normal", line)
+            self.say("normal", asked_text(line))
         self.asking = Asking(command, flow, done, nothing)
         bar = self.query_one("#bar")
         bar.add_class("-answering")
@@ -754,14 +987,18 @@ class SynthaseApp(App):
         asking.question = asking.flow.next_question(asking.answers)
         if asking.question is None:
             self.stop_asking()
-            asking.done(asking.answers)
+            try:
+                asking.done(asking.answers)
+            except (WorkspaceError, CompoundError) as error:
+                self.say("error", in_app(str(error)))
         else:
-            self.query_one("#question", Static).update(asking.question.prompt.rstrip())
+            prompt = asked_text(asking.question.prompt.rstrip())
+            self.query_one("#question", Static).update(prompt)
 
     def answer(self, text: str) -> None:
         """Check the answer typed; a wrong one is explained and asked again."""
         asking = self.asking
-        self.show(Answered(asking.question.prompt, text))
+        self.show(Answered(asked_text(asking.question.prompt), text))
         try:
             answer = asking.question.answer(text, asking.answers)
         except CompoundError as error:
@@ -769,7 +1006,7 @@ class SynthaseApp(App):
             return
         asking.answers[asking.question.key] = answer
         if asking.question.kept is not None and not answer:
-            self.say("normal", asking.question.kept)
+            self.say("normal", asked_text(asking.question.kept))
         self.next_question()
 
     def stop_asking(self) -> None:
@@ -832,9 +1069,7 @@ class SynthaseApp(App):
 
 # Shared messages name syn commands; in the app they name its own.
 IN_APP = (
-    ('"syn compound add"', '"/compound add"'),
-    ('"syn compound edit ', '"/compound edit '),
-    ('"syn compound list"', '"/compound list"'),
+    ('"syn compound ', '"/compound '),
     ('"syn init"', '"/init"'),
 )
 
@@ -844,6 +1079,14 @@ def in_app(message: str) -> str:
     for syn, app in IN_APP:
         message = message.replace(syn, app)
     return message
+
+
+def asked_text(text: str) -> str:
+    """A question, its opening lines or a kept line as the app shows it.
+
+    It names the app's own commands, and its dates are DD/MM/YYYY.
+    """
+    return screen_dates(in_app(text))
 
 
 def main(argv: list[str] | None = None) -> int:

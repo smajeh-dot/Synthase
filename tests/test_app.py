@@ -7,7 +7,6 @@ from datetime import date
 from synthase import __version__
 from synthase import app as app_module
 from synthase.app import (
-    NOT_YET,
     PLACEHOLDER,
     UNKNOWN,
     CardMessage,
@@ -31,6 +30,7 @@ from synthase.compounds import (
     archive_compound,
     compound_history,
     get_compound,
+    link_spectrum,
     list_compounds,
 )
 from synthase.config import read_template
@@ -207,18 +207,6 @@ def test_tab_lists_several_matches_once():
         await pilot.pause()
         assert bar(app) == "/compound edit"
         assert messages(app) == [("hint", "edit  edit-batch")]
-
-    run(steps)
-
-
-def test_a_syn_command_not_in_the_app_yet_says_where_to_run_it():
-    async def steps(app, pilot):
-        await type_line(app, pilot, "/Compound Batch 1")
-        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound batch"))
-        assert NOT_YET.format(name="compound batch") == (
-            "/compound batch isn't in the app yet. For now, run syn compound batch "
-            "in PowerShell."
-        )
 
     run(steps)
 
@@ -1077,3 +1065,436 @@ def test_compound_edit_with_options_asks_only_confirmations(tmp_path):
     assert (compound.smiles, compound.notes) == ("CCO", None)
     assert str(compound.melting_point) == "455–457 K"
     assert len(compound_history(folder, "1")[1]) == 4
+
+
+def test_compound_archive_asks_first_and_restore_does_not(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    question = (
+        "Archive SYN-001 (Test compound A)? It stays in the register but is "
+        'hidden from "/compound list". [y/N]'
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound archive 1")
+        assert app.query_one("#bar").border_title == (
+            " Answering /compound archive · Esc cancels "
+        )
+        await answer_each(app, pilot, [(question, "")])
+        assert messages(app)[-1] == ("normal", "Kept SYN-001 as it was.")
+        await type_line(app, pilot, "/compound archive 1")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        assert not get_compound(folder, "1").archived
+        await type_line(app, pilot, "/compound archive SYN-001")
+        await answer_each(app, pilot, [(question, "y")])
+        assert messages(app)[-1] == (
+            "success",
+            'Archived SYN-001: Test compound A. Undo with "/compound restore SYN-001".',
+        )
+        await type_line(app, pilot, "/compound archive 1")
+        assert messages(app)[-1] == ("error", "SYN-001 is already archived.")
+        await type_line(app, pilot, "/compound restore 1")
+        assert not answering(app)
+        assert messages(app)[-1] == (
+            "success",
+            'Restored SYN-001: Test compound A. It shows in "/compound list" again.',
+        )
+        await type_line(app, pilot, "/compound restore 1")
+        assert messages(app)[-1] == (
+            "error",
+            "SYN-001 isn't archived, so there's nothing to restore.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [(c.field, c.old, c.new) for c in changes[-2:]] == [
+        ("archived", "no", "yes"),
+        ("archived", "yes", "no"),
+    ]
+
+
+def test_compound_batch_by_answering_and_with_options(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    today = date.today().strftime("%d/%m/%Y")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound batch 1")
+        assert messages(app)[-1] == (
+            "normal",
+            "New batch of SYN-001: Test compound A. Press Enter for today's date, "
+            "or to skip the mass or the yield.",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Date made (e.g. 18/10/2026):", ""),
+                ("Mass made (e.g. 152 mg):", ""),
+                ("Yield in % (e.g. 64.2):", ""),
+            ],
+        )
+        # Neither a mass nor a yield is explained, and the yield is asked again.
+        assert messages(app)[-1] == (
+            "error",
+            "A batch needs its mass made, its yield or both.",
+        )
+        await answer_each(app, pilot, [("Yield in % (e.g. 64.2):", "104")])
+        assert not answering(app)
+        assert messages(app)[-4:] == [
+            ("success", "Added batch 1 to SYN-001: Test compound A"),
+            ("normal", f"1  {today}  -  104%"),
+            (
+                "caution",
+                "A yield over 100% usually means the product is still wet or impure.",
+            ),
+            (
+                "hint",
+                'SYN-001 is still "planned". Change it with '
+                '"/compound edit SYN-001 --status synthesised".',
+            ),
+        ]
+        assert shown(app, ".rows.-batches .name")[-3:] == ["1", today, "-"]
+        await type_line(app, pilot, "/compound batch 1")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was added.")
+        await type_line(app, pilot, "/compound edit 1 --status synthesised")
+        await type_line(app, pilot, "y")
+        await type_line(
+            app,
+            pilot,
+            '/compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
+        )
+        assert not answering(app)
+        assert messages(app)[-2:] == [
+            ("success", "Added batch 2 to SYN-001: Test compound A"),
+            ("normal", "2  18/10/2026  152 mg  64.2%"),
+        ]
+        await type_line(app, pilot, "/compound batch 1 --mass 152")
+        assert messages(app)[-1] == (
+            "error",
+            "Give the unit as well, mg or g, such as 152 mg.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [c.new for c in changes if c.field == "batch"] == [
+        f"1: {date.today().isoformat()}, 104%",
+        "2: 2026-10-18, 152 mg, 64.2%",
+    ]
+
+
+def test_compound_edit_batch_asks_before_each_change(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound edit-batch 1 1")
+        assert messages(app)[-1] == (
+            "normal",
+            "Editing batch 1 of SYN-001: Test compound A. Press Enter to keep a "
+            "value, or type - to clear the mass or yield.",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Date made [18/10/2026]:", "17/10/2026"),
+                ("Mass made [152 mg]:", "125 mg"),
+                ("Yield in % [64.2%]:", "-"),
+                (
+                    'Change batch 1\'s date from "18/10/2026" to "17/10/2026"? [y/N]',
+                    "n",
+                ),
+            ],
+        )
+        assert messages(app)[-1] == ("normal", 'Kept batch 1\'s date as "18/10/2026".')
+        await answer_each(
+            app,
+            pilot,
+            [
+                ('Change batch 1\'s mass from "152 mg" to "125 mg"? [y/N]', "y"),
+                ('Clear batch 1\'s yield ("64.2%")? [y/N]', "yes"),
+            ],
+        )
+        assert not answering(app)
+        assert messages(app)[-2:] == [
+            ("success", "Saved 2 changes to batch 1 of SYN-001: Test compound A"),
+            ("normal", "1  18/10/2026  125 mg  -"),
+        ]
+        # Filling a blank value asks nothing.
+        await type_line(app, pilot, "/compound edit-batch SYN-001 1 --yield 50")
+        assert not answering(app)
+        assert messages(app)[-2][1] == (
+            "Saved 1 change to batch 1 of SYN-001: Test compound A"
+        )
+        # Clearing both is refused before anything is asked.
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass - --yield -")
+        assert not answering(app)
+        assert messages(app)[-1] == (
+            "error",
+            "A batch needs its mass made, its yield or both.",
+        )
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 1")
+        assert messages(app)[-1][0] == "error"
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 99mg")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        await type_line(app, pilot, "/compound edit-batch 1 4 --mass 99mg")
+        assert messages(app)[-1] == (
+            "error",
+            "SYN-001 has no batch 4. Its batches are 1.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [(c.field, c.old, c.new) for c in changes[-3:]] == [
+        ("batch 1 mass", "152 mg", "125 mg"),
+        ("batch 1 yield", "64.2%", None),
+        ("batch 1 yield", None, "50.0%"),
+    ]
+
+
+def test_compound_remove_batch_asks_first_and_keeps_the_numbers(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A", status="synthesised")
+    add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
+    add_batch(folder, "1", date(2026, 10, 18), 0.140, 50.0)
+    question = (
+        "Remove batch 2 of SYN-001 (18/10/2026, 140 mg, 50.0%)? It is hidden from "
+        "the card but kept in the history, and the other batches keep their "
+        "numbers. [y/N]"
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await answer_each(app, pilot, [(question, "no")])
+        assert messages(app)[-1] == ("normal", "Kept batch 2 of SYN-001 as it was.")
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await answer_each(app, pilot, [(question, "y")])
+        assert messages(app)[-1] == (
+            "success",
+            "Removed batch 2 from SYN-001: Test compound A. "
+            'It stays in "/compound history SYN-001".',
+        )
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        assert messages(app)[-1][1].startswith("Batch 2 of SYN-001 was removed on ")
+        await type_line(app, pilot, "/compound batch 1 --mass 99mg")
+        assert messages(app)[-2][1] == "Added batch 3 to SYN-001: Test compound A"
+        await type_line(app, pilot, "/compound show 1")
+        assert shown(app, "CardMessage .rows.-batches .name")[::3] == ["1", "3"]
+
+    run(steps)
+
+
+def test_compound_spectrum_links_inside_the_workspace_only(tmp_path, monkeypatch):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    (folder / "spectra").mkdir()
+    (folder / "spectra" / "SYN-001 IR.csv").write_text("invented\n", encoding="utf-8")
+    (folder / "spectra" / "SYN-001 UV.csv").write_text("invented\n", encoding="utf-8")
+    outside = tmp_path / "outside.csv"
+    outside.write_text("invented\n", encoding="utf-8")
+    # Opened outside the workspace, so a relative path counts from the workspace.
+    monkeypatch.chdir(tmp_path)
+    today = date.today().strftime("%d/%m/%Y")
+    ir = os.path.join("spectra", "SYN-001 IR.csv")
+
+    async def steps(app, pilot):
+        await type_line(
+            app, pilot, '/compound spectrum 1 "spectra/SYN-001 IR.csv" --kind ir'
+        )
+        assert not answering(app)
+        assert messages(app)[-2:] == [
+            ("success", "Linked to SYN-001: Test compound A"),
+            ("normal", f"IR  {ir}  (added {today})"),
+        ]
+        await type_line(app, pilot, f'/compound spectrum 1 "{outside}"')
+        assert messages(app)[-1] == (
+            "error",
+            f"Spectra files must be inside the workspace ({folder}). Copy it in, "
+            'for example into a "spectra" folder, then link it.',
+        )
+        await type_line(app, pilot, "/compound spectrum 1 --kind IR")
+        assert messages(app)[-1] == (
+            "error",
+            'Give the file to link, as in "/compound spectrum SYN-001 '
+            'spectra\\IR.csv --kind IR".',
+        )
+        await type_line(app, pilot, "/compound spectrum 1")
+        assert messages(app)[-1] == (
+            "normal",
+            "Link a spectra file to SYN-001: Test compound A.",
+        )
+        await answer_each(app, pilot, [("File:", "")])
+        assert messages(app)[-1] == (
+            "error",
+            "Type the file's path, or drag the file in.",
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was linked.")
+        await type_line(app, pilot, "/compound spectrum 1")
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("File:", f'"{folder / "spectra" / "SYN-001 UV.csv"}"'),
+                ("Kind (IR, 1H NMR, 13C NMR, mass spec, UV-vis, other):", "uv vis"),
+            ],
+        )
+        assert messages(app)[-2][1] == "Linked to SYN-001: Test compound A"
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [c.new for c in changes if c.field == "spectrum"] == [
+        "IR spectra/SYN-001 IR.csv",
+        "UV-vis spectra/SYN-001 UV.csv",
+    ]
+
+
+def test_compound_unlink_lists_the_files_and_asks_first(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    (folder / "spectra").mkdir()
+    for name in ("IR.csv", "UV.csv"):
+        (folder / "spectra" / name).write_text("invented\n", encoding="utf-8")
+    link_spectrum(folder, "1", folder / "spectra" / "IR.csv", "IR")
+    link_spectrum(folder, "1", folder / "spectra" / "UV.csv")
+    today = date.today().strftime("%d/%m/%Y")
+    ir = os.path.join("spectra", "IR.csv")
+    uv = os.path.join("spectra", "UV.csv")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound unlink 1")
+        assert messages(app)[-3:] == [
+            ("normal", "Spectra linked to SYN-001: Test compound A"),
+            ("normal", f"  1  IR  {ir}  (added {today})"),
+            ("normal", f"  2  -   {uv}  (added {today})"),
+        ]
+        await answer_each(app, pilot, [("Which one? (1-2):", "3")])
+        assert messages(app)[-1] == (
+            "error",
+            "Type the number of the file to unlink (1-2).",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Which one? (1-2):", "1"),
+                (
+                    f"Unlink IR {ir} from SYN-001? The file itself is not touched. "
+                    "[y/N]",
+                    "",
+                ),
+            ],
+        )
+        assert messages(app)[-1] == ("normal", f"Kept the link to IR {ir}.")
+        await type_line(app, pilot, "/compound unlink 1 SPECTRA\\uv.csv")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        await type_line(app, pilot, "/compound unlink 1 SPECTRA\\uv.csv")
+        await answer_each(
+            app,
+            pilot,
+            [(f"Unlink {uv} from SYN-001? The file itself is not touched. [y/N]", "y")],
+        )
+        assert messages(app)[-1] == (
+            "success",
+            f"Unlinked {uv} from SYN-001: Test compound A.",
+        )
+        await type_line(app, pilot, "/compound unlink 1 nothing.csv")
+        assert messages(app)[-1] == (
+            "error",
+            f'"nothing.csv" isn\'t linked to SYN-001. Its linked files are: {ir}.',
+        )
+
+    run(steps)
+    assert (folder / "spectra" / "UV.csv").is_file()
+
+
+def test_help_names_the_apps_own_commands():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help compound archive")
+        assert (
+            'from "/compound list". Nothing is deleted: "/compound show"'
+            in (messages(app)[-1][1])
+        )
+        assert '"syn ' not in messages(app)[-1][1]
+
+    run(steps)
+
+
+def test_the_rest_of_the_register_from_archive_to_unlink(tmp_path):
+    """The issue's scenario: archive and restore, two batches, a correction,
+    a removal, then a spectra file linked and unlinked."""
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A", "chalcone", smiles="CCO")
+    (folder / "spectra").mkdir()
+    (folder / "spectra" / "invented IR.csv").write_text("1,2\n", encoding="utf-8")
+    ir = os.path.join("spectra", "invented IR.csv")
+    today = date.today().strftime("%d/%m/%Y")
+
+    async def steps(app, pilot):
+        for typed in (
+            "/compound archive 1",
+            "y",
+            "/compound restore 1",
+            '/compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
+            "/compound batch 1",
+            "18/10/2026",
+            "140 mg",
+            "50.0",
+            '/compound edit-batch 1 1 --mass "125 mg"',
+            "y",
+            "/compound remove-batch 1 2",
+            "y",
+            '/compound spectrum 1 "spectra/invented IR.csv" --kind IR',
+            "/compound unlink 1",
+            "1",
+            "y",
+            "/compound show 1",
+            "/compound history 1",
+        ):
+            await type_line(app, pilot, typed)
+        assert not answering(app)
+        assert [text for kind, text in messages(app) if kind == "success"] == [
+            'Archived SYN-001: Test compound A. Undo with "/compound restore SYN-001".',
+            'Restored SYN-001: Test compound A. It shows in "/compound list" again.',
+            "Added batch 1 to SYN-001: Test compound A",
+            "Added batch 2 to SYN-001: Test compound A",
+            "Saved 1 change to batch 1 of SYN-001: Test compound A",
+            "Removed batch 2 from SYN-001: Test compound A. "
+            'It stays in "/compound history SYN-001".',
+            "Linked to SYN-001: Test compound A",
+            f"Unlinked IR {ir} from SYN-001: Test compound A.",
+        ]
+        # The card keeps batch 1 with its new mass, and no spectra.
+        assert shown(app, "CardMessage .rows.-batches .name") == [
+            "1",
+            "18/10/2026",
+            "125 mg",
+        ]
+        assert shown(app, "CardMessage .rows.-batches .value") == ["64.2%"]
+        assert not app.query("CardMessage .rows.-spectra")
+        assert "no spectra linked yet" in shown(app, "CardMessage .missing")
+        rows = app.query(ChangeLog).last().rows
+        assert [(name, change) for _, name, change in rows][-8:] == [
+            ("archived", "no → yes"),
+            ("archived", "yes → no"),
+            ("batch", "(blank) → 1: 18/10/2026, 152 mg, 64.2%"),
+            ("batch", "(blank) → 2: 18/10/2026, 140 mg, 50.0%"),
+            ("batch 1 mass", "152 mg → 125 mg"),
+            ("batch", "2: 18/10/2026, 140 mg, 50.0% → removed"),
+            ("spectrum", "(blank) → IR spectra/invented IR.csv"),
+            ("spectrum", "IR spectra/invented IR.csv → removed"),
+        ]
+        assert all(when.startswith(today) for when, _, _ in rows[-8:])
+
+    run(steps)

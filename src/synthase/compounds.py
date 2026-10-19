@@ -524,6 +524,20 @@ def parse_yield(text: str) -> float:
     return percent
 
 
+def parse_batch(
+    made_on: str | None, mass: str | None, yield_percent: str | None
+) -> tuple[date, float | None, float | None]:
+    """The date and numbers add_batch takes, from typed text such as "152 mg".
+
+    A mass or yield left as None stays blank, and no date means today.
+    """
+    return (
+        parse_batch_date(made_on or ""),
+        None if mass is None else parse_mass(mass),
+        None if yield_percent is None else parse_yield(yield_percent),
+    )
+
+
 def parse_batch_number(text: str) -> int:
     """The batch number ``text`` gives, such as ``2``."""
     text = text.strip()
@@ -842,12 +856,7 @@ def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compo
     Nothing is deleted, and the change is logged.
     """
     compound = get_compound(workspace, text)
-    if compound.archived == archived:
-        raise CompoundError(
-            f"{compound.id} is already archived."
-            if archived
-            else f"{compound.id} isn't archived, so there's nothing to restore."
-        )
+    check_archive(compound, archived)
     with _open(workspace) as db:
         db.execute(
             "UPDATE compounds SET archived = ? WHERE id = ?",
@@ -859,6 +868,16 @@ def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compo
             [Change("archived", _yes_no(not archived), _yes_no(archived))],
         )
     return replace(compound, archived=archived)
+
+
+def check_archive(compound: Compound, archived: bool = True) -> None:
+    """Refuse to archive ``compound`` twice, or to restore one that isn't archived."""
+    if compound.archived == archived:
+        raise CompoundError(
+            f"{compound.id} is already archived."
+            if archived
+            else f"{compound.id} isn't archived, so there's nothing to restore."
+        )
 
 
 def _yes_no(value: bool) -> str:
@@ -995,32 +1014,16 @@ def edit_batch(
     """
     compound = get_compound(workspace, text)
     row_id, batch = _find_batch(workspace, compound, number)
-    current = {
-        "date": batch.made_on,
-        "mass": batch.mass_g,
-        "yield": batch.yield_percent,
-    }
-    wanted = {}
-    for part, value in zip(BATCH_PARTS, (made_on, mass, yield_percent), strict=True):
-        if value is None or not value.strip():
-            continue
-        new = parse_batch_value(part, value)
-        if new != current[part]:
-            wanted[part] = new
-    asked = _corrected(batch, {**current, **wanted})
-    if asked.mass_g is None and asked.yield_percent is None:
-        raise CompoundError("A batch needs its mass made, its yield or both.")
+    values = _batch_values(batch)
     changes = []
-    for part, new in wanted.items():
-        old = _batch_text(batch, part)
-        change = Change(f"batch {batch.number} {part}", old, _batch_text(asked, part))
-        if old is None or confirm(change):
+    for part, new, change in _batch_wanted(batch, (made_on, mass, yield_percent)):
+        if change.old is None or confirm(change):
             changes.append(change)
-            current[part] = new
+            values[part] = new
     if not changes:
         return compound, batch, []
 
-    batch = _corrected(batch, current)
+    batch = _corrected(batch, values)
     with _open(workspace) as db:
         db.execute(
             "UPDATE batches SET made_on = ?, mass_g = ?, yield_percent = ? "
@@ -1029,6 +1032,63 @@ def edit_batch(
         )
         _log(db, compound.number, changes)
     return compound, batch, changes
+
+
+def planned_batch_changes(
+    workspace: Path,
+    text: str,
+    number: str,
+    made_on: str | None = None,
+    mass: str | None = None,
+    yield_percent: str | None = None,
+) -> list[Change]:
+    """The changes edit_batch would make to batch ``number``, saving nothing.
+
+    The values are as for edit_batch, and are checked the same way, so a
+    caller can ask every question before calling it.
+    """
+    compound = get_compound(workspace, text)
+    batch = _find_batch(workspace, compound, number)[1]
+    return [
+        change for _, _, change in _batch_wanted(batch, (made_on, mass, yield_percent))
+    ]
+
+
+def _batch_wanted(
+    batch: Batch, given: tuple[str | None, ...]
+) -> list[tuple[str, object, Change]]:
+    """Each part of ``batch`` that ``given`` changes: the part, new value and change.
+
+    ``given`` is the typed date, mass and yield. Raises CompoundError for a
+    refused value, or a batch left with neither its mass nor its yield.
+    """
+    current = _batch_values(batch)
+    wanted = {}
+    for part, value in zip(BATCH_PARTS, given, strict=True):
+        if value is None or not value.strip():
+            continue
+        new = parse_batch_value(part, value)
+        if new != current[part]:
+            wanted[part] = new
+    asked = _corrected(batch, {**current, **wanted})
+    if asked.mass_g is None and asked.yield_percent is None:
+        raise CompoundError("A batch needs its mass made, its yield or both.")
+    return [
+        (
+            part,
+            new,
+            Change(
+                f"batch {batch.number} {part}",
+                _batch_text(batch, part),
+                _batch_text(asked, part),
+            ),
+        )
+        for part, new in wanted.items()
+    ]
+
+
+def _batch_values(batch: Batch) -> dict[str, object]:
+    return {"date": batch.made_on, "mass": batch.mass_g, "yield": batch.yield_percent}
 
 
 def _corrected(batch: Batch, values: dict[str, object]) -> Batch:

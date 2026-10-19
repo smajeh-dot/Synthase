@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from synthase.compound_text import aligned, spectrum_cells
+from synthase.compound_text import aligned, spectrum_cells, spectrum_name
 from synthase.compounds import (
     CLASSES,
     CLEAR,
@@ -24,6 +24,7 @@ from synthase.compounds import (
     Change,
     Compound,
     CompoundError,
+    Spectrum,
     as_text,
     check_label,
     check_rf,
@@ -393,6 +394,43 @@ def unlink_flow(workspace: Path, compound: Compound) -> Flow:
             *(f"  {line}" for line in aligned(rows)),
         ),
         (Question("file", f"Which one? ({choices})", check, skippable=False),),
+    )
+
+
+def archive_question(compound: Compound) -> Question:
+    """The [y/N] question asked before archiving ``compound``."""
+    return Question(
+        "archive",
+        f"Archive {compound.id} ({compound.label})? It stays in the register "
+        'but is hidden from "syn compound list".',
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept {compound.id} as it was.",
+    )
+
+
+def remove_batch_question(compound: Compound, batch: Batch) -> Question:
+    """The [y/N] question asked before removing ``batch`` of ``compound``."""
+    return Question(
+        "remove",
+        f"Remove batch {batch.number} of {compound.id} ({batch.details})? "
+        "It is hidden from the card but kept in the history, and the other "
+        "batches keep their numbers.",
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept batch {batch.number} of {compound.id} as it was.",
+    )
+
+
+def unlink_question(compound: Compound, spectrum: Spectrum) -> Question:
+    """The [y/N] question asked before unlinking ``spectrum`` from ``compound``."""
+    name = spectrum_name(spectrum)
+    return Question(
+        "unlink",
+        f"Unlink {name} from {compound.id}? The file itself is not touched.",
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept the link to {name}.",
     )
 
 
