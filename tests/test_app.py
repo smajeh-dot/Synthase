@@ -256,6 +256,7 @@ def test_help_lists_every_command_then_how_to_get_more():
             "/init",
             "/doctor",
             "/compound",
+            "/config",
             "/help",
             "/quit",
         ]
@@ -297,7 +298,8 @@ def test_an_unknown_help_topic_lists_the_topics():
         await type_line(app, pilot, "/help foo")
         assert messages(app)[-1] == (
             "error",
-            'There\'s no help on "foo". Topics: init, doctor, compound, help, quit.',
+            'There\'s no help on "foo". '
+            "Topics: init, doctor, compound, config, help, quit.",
         )
 
     run(steps)
@@ -305,7 +307,7 @@ def test_an_unknown_help_topic_lists_the_topics():
 
 def test_tab_completes_a_help_topic():
     async def steps(app, pilot):
-        await press_tab(app, pilot, "/help co")
+        await press_tab(app, pilot, "/help com")
         assert bar(app) == "/help compound "
 
     run(steps)
@@ -1496,5 +1498,148 @@ def test_the_rest_of_the_register_from_archive_to_unlink(tmp_path):
             ("spectrum", "IR spectra/invented IR.csv → removed"),
         ]
         assert all(when.startswith(today) for when, _, _ in rows[-8:])
+
+    run(steps)
+
+
+def test_config_shows_every_value_the_count_and_the_folders(invented_config, capsys):
+    main(["doctor"])
+    printed = [line.strip() for line in capsys.readouterr().out.splitlines()]
+    folder_line = next(line for line in printed if "Compounds folder" in line)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config")
+        echo, table, count, folders = messages(app)
+        assert echo == ("echo", "/config")
+        assert table == (
+            "normal",
+            "\n".join(
+                [
+                    f"Settings in {invented_config / 'config.toml'}",
+                    "Entry  Value  Unit  Verified  Source",
+                    "test.alpha  2.5  mg  ✓ yes  Invented Handbook, p. 1",
+                    "test.beta  1–3  K  ✓ yes  Invented Journal 1, 2",
+                    "test.gamma  ≤1 low, >1 high  -  ? no  UNVERIFIED invented",
+                    "test.delta  mL  -  ? no  UNVERIFIED invented",
+                ]
+            ),
+        )
+        # The words mark the unverified values; the colour only helps.
+        assert shown(app, ".verified.-no") == ["? no", "? no"]
+        assert shown(app, ".verified.-yes") == ["✓ yes", "✓ yes"]
+        assert count == ("warning", "2 of 4 values are still unverified.")
+        assert folders[1] == folder_line
+        assert folder_line == f"ok    Compounds folder: {invented_config / 'tables'}"
+        assert status_text(app).endswith("? 2 config values unverified")
+
+    run(steps, size=(200, 30))
+
+
+def test_config_wraps_inside_80_columns(invented_config):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config")
+        table = app.query_one(app_module.ConfigTable)
+        assert table.size.width < 80
+        assert table.size.height > len(table.text.splitlines())
+
+    run(steps, size=(80, 24))
+
+
+def test_config_says_when_every_value_is_verified(invented_config):
+    path = invented_config / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("false", "true"), encoding="utf-8")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config")
+        assert messages(app)[2] == ("success", "All 4 values are verified.")
+        assert shown(app, ".verified.-no") == []
+
+    run(steps)
+
+
+def test_config_name_shows_one_value_in_full(invented_config):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config [TEST.Gamma]")
+        _, entry, warning = messages(app)
+        assert entry == (
+            "normal",
+            "test.gamma\nName  gamma bands\nValue  ≤1 low, >1 high\nUnit  -\n"
+            "Source  UNVERIFIED invented\nVerified  ? no",
+        )
+        assert shown(app, ".verified.-no") == ["? no"]
+        assert warning == (
+            "warning",
+            "Warning: gamma bands (≤1 low, >1 high) has not been checked against "
+            "the literature yet. Treat results that use it as provisional.",
+        )
+        # A verified value has no warning after it.
+        await type_line(app, pilot, "/config test.alpha")
+        assert messages(app)[-1][1].endswith("Verified  ✓ yes")
+
+    run(steps)
+
+
+def test_config_name_that_isnt_there_or_more_than_one(invented_config):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config test.zeta")
+        assert messages(app)[-2:] == [
+            (
+                "error",
+                "The config has no entry called [test.zeta]. Check the spelling, "
+                "or compare your config with the template.",
+            ),
+            ("hint", "Type /config to see every entry."),
+        ]
+        await type_line(app, pilot, "/config set test.alpha 3")
+        assert messages(app)[-1] == (
+            "error",
+            "/config takes one entry name, e.g. /config mic.growth_threshold.",
+        )
+
+    run(steps)
+
+
+def test_config_without_a_workspace_says_what_doctor_says():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config")
+        assert messages(app)[1:] == [
+            ("error", 'There is no workspace yet. Run "/init" to create one.')
+        ]
+
+    run(steps)
+
+
+def test_config_with_a_folder_missing_gives_doctors_fix(invented_config):
+    (invented_config / "results").rmdir()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config")
+        assert messages(app)[1:] == [
+            ("error", f"The workspace at {invented_config} is missing: results"),
+            (
+                "hint",
+                f'Fix: run /init "{invented_config}". It adds what is missing and '
+                "never touches your files. If it asks about config.toml, answer "
+                "no to keep yours.",
+            ),
+        ]
+
+    run(steps, size=(200, 30))
+
+
+def test_config_that_is_broken_gives_doctors_error(invented_config, capsys):
+    path = invented_config / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("verified = true", "verified = 1", 1), "utf-8")
+    main(["doctor"])
+    printed = capsys.readouterr().out
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config test.alpha")
+        kind, error = messages(app)[-1]
+        assert kind == "error"
+        assert error.startswith(f"Your config file has a problem: {path}")
+        assert f"FAIL  {error}" in printed
 
     run(steps)

@@ -48,19 +48,22 @@ class ConfigValue:
 
     def describe(self) -> str:
         """The value and its unit as plain text, e.g. ``0.1 OD600``."""
+        text = self.value_text()
+        return f"{text} {self.unit}" if self.unit else text
+
+    def value_text(self) -> str:
+        """The value alone as plain text, e.g. ``0.1`` or ``1600–1650``."""
         value = self.value
         if isinstance(value, list) and isinstance(value[0], dict):
             parts = [f"≤{band['max']:g} {band['label']}" for band in value[:-1]] + [
                 f">{value[-2]['max']:g} {value[-1]['label']}"
             ]
-            text = ", ".join(parts)
-        elif isinstance(value, list):
-            text = f"{value[0]:g}–{value[1]:g}"
-        elif isinstance(value, str):
-            text = value
-        else:
-            text = f"{value:g}"
-        return f"{text} {self.unit}" if self.unit else text
+            return ", ".join(parts)
+        if isinstance(value, list):
+            return f"{value[0]:g}–{value[1]:g}"
+        if isinstance(value, str):
+            return value
+        return f"{value:g}"
 
 
 class Config:

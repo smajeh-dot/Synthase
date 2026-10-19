@@ -19,6 +19,14 @@ HELP = "help"
 # Commands only the app has: name, one-line help, usage and description.
 APP_ONLY = (
     (
+        "config",
+        "show the settings, or one value in full",
+        "/config [NAME]",
+        "Show every value in config.toml with its unit, source and whether it "
+        "has been checked, then the [folders] settings. /config NAME shows one "
+        "value in full, e.g. /config mic.growth_threshold.",
+    ),
+    (
         HELP,
         "list the commands, or explain one",
         "/help [COMMAND]",

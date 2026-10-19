@@ -98,6 +98,41 @@ Screen {
 .msg.-unverified .key { color: $muted; }
 .msg.-unverified .value { color: $foreground; }
 
+/* /config: the heading, then a bold heading row over a thin line and one row
+   per value. Value and source share the room left and wrap; the other
+   columns fit their words. The verified words carry the meaning, colour only
+   helps. */
+.msg.-config > .body > *, .msg.-entry > .body > * { height: auto; }
+.msg.-config .title, .msg.-entry .title { color: $heading; text-style: bold; }
+.msg.-config .rows {
+    height: auto;
+    margin-top: 1;
+    grid-size: 5;
+    grid-columns: auto 1fr auto auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 0;
+}
+.msg.-config .rows > * { width: 1fr; height: auto; padding-right: 2; }
+.msg.-config .rows > .heading {
+    height: 100%;
+    color: $heading;
+    text-style: bold;
+    border-bottom: solid $line;
+}
+.msg.-config .verified.-yes, .msg.-entry .verified.-yes { color: $success; }
+.msg.-config .verified.-no, .msg.-entry .verified.-no { color: $warning; }
+
+/* /config NAME: the key, then each field's name (muted) and what it is. */
+.msg.-entry .rows {
+    height: auto;
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-entry .rows > * { height: auto; }
+.msg.-entry .name { color: $muted; }
+
 /* A question and its answer, kept as a record: the question muted, the
    answer blue. */
 .msg.-answered > .body { color: $muted; }
