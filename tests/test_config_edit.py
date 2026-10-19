@@ -14,7 +14,8 @@ from synthase.config_edit import (
 
 
 def config_text(folder):
-    return (folder / "config.toml").read_bytes().decode("utf-8")
+    """The config's text, with \r\n read as \n so Windows CI sees the same."""
+    return (folder / "config.toml").read_text(encoding="utf-8")
 
 
 def untouched(before, after, changed):
