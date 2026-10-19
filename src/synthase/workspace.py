@@ -179,7 +179,7 @@ def create_workspace(path: Path | None, ask: Callable[[str], bool]) -> Created:
 
     for name in FOLDERS:
         (path / name).mkdir(parents=True, exist_ok=True)
-    backup = _back_up(config) if replace else None
+    backup = back_up(config) if replace else None
     if replace or not target.existing:
         config.write_text(read_template(), encoding="utf-8")
     remember(path)
@@ -231,7 +231,7 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
-def _back_up(config: Path) -> Path:
+def back_up(config: Path) -> Path:
     """Copy the config to a new ``config.toml.bak-…`` file, never over an old one."""
     stem = f"{config.name}.bak-{_timestamp()}"
     backup = config.with_name(stem)

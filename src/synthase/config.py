@@ -128,11 +128,23 @@ def _problem(path, where: str, what: str, fix: str = "that entry") -> ConfigErro
 
 def _read(path: Path | Traversable) -> tuple[dict[str, ConfigValue], dict[str, str]]:
     try:
-        data = tomllib.loads(path.read_bytes().decode("utf-8"))
+        text = path.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
         raise _problem(
             path, "", "it is not saved as UTF-8 text", "the file's encoding"
         ) from None
+    return check_text(path, text)
+
+
+def check_text(
+    path: Path | Traversable, text: str
+) -> tuple[dict[str, ConfigValue], dict[str, str]]:
+    """The entries and folders in ``text``, checked as ``load_config()`` checks them.
+
+    ``path`` is the file the text is, or will be, saved in, for the messages.
+    """
+    try:
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as error:
         message = str(error)
         match = re.search(r" \(at line (\d+), column \d+\)$", message)
