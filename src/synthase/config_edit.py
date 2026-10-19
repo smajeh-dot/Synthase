@@ -142,7 +142,7 @@ def plan_folder(workspace: Path, area: str, typed: str) -> Edit:
     return file.change_folder(area, _folder_toml(folder), done)
 
 
-def save(edit: Edit, back_up: bool) -> Path | None:
+def save_edit(edit: Edit, back_up: bool) -> Path | None:
     """Save ``edit``, first keeping the old file as a .bak copy if ``back_up``.
 
     Returns the backup's path, or None when no backup was made.

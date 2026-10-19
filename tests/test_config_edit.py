@@ -9,7 +9,7 @@ from synthase.config_edit import (
     plan_set,
     plan_source,
     plan_verify,
-    save,
+    save_edit,
 )
 
 
@@ -37,7 +37,7 @@ def test_set_a_number_asks_first_then_marks_it_unverified(invented_config):
     assert edit.note == ""
     # Nothing is saved until the edit is.
     assert config_text(invented_config) == before
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == "Changed alpha limit to 3 mg. It is now unverified."
     entry = load_config(invented_config).get("test.alpha")
     assert (entry.value, entry.verified) == (3, False)
@@ -49,7 +49,7 @@ def test_set_a_number_asks_first_then_marks_it_unverified(invented_config):
 
 @pytest.mark.parametrize("typed", ["2 4", "2-4", "2 - 4", "2–4", " 2  4 "])
 def test_set_a_range(invented_config, typed):
-    save(plan_set(invented_config, "test.beta", typed), back_up=False)
+    save_edit(plan_set(invented_config, "test.beta", typed), back_up=False)
     entry = load_config(invented_config).get("test.beta")
     assert (entry.value, entry.verified) == ([2, 4], False)
 
@@ -65,7 +65,7 @@ def test_set_a_range(invented_config, typed):
 def test_set_bands_as_config_shows_them(invented_config, typed):
     edit = plan_set(invented_config, "[TEST.Gamma]", typed)
     assert "to ≤0.5 low, ≤2 middle, >2 high?" in edit.question
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert load_config(invented_config).get("test.gamma").value == [
         {"max": 0.5, "label": "low"},
         {"max": 2, "label": "middle"},
@@ -75,7 +75,7 @@ def test_set_bands_as_config_shows_them(invented_config, typed):
 
 
 def test_set_text_without_quotes(invented_config):
-    save(plan_set(invented_config, "test.delta", "µL"), back_up=False)
+    save_edit(plan_set(invented_config, "test.delta", "µL"), back_up=False)
     assert load_config(invented_config).get("test.delta").value == "µL"
 
 
@@ -161,7 +161,7 @@ def test_a_source_for_an_unverified_value_needs_no_question(invented_config):
     before = config_text(invented_config)
     edit = plan_source(invented_config, "test.delta", "Invented Tables, p. 9")
     assert edit.question == ""
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == "Changed the source of delta unit."
     assert edit.hint == (
         "Type /config verify test.delta once you have checked the value against it."
@@ -180,20 +180,22 @@ def test_a_source_for_a_verified_value_asks_and_unverifies_it(invented_config):
         "will be marked unverified until you check it again. Type yes to change it "
         "[no]"
     )
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == "Changed the source of alpha limit. It is now unverified."
     entry = load_config(invented_config).get("test.alpha")
     assert (entry.source, entry.verified) == ('Invented "Big" Book', False)
 
 
 def test_verify_asks_then_marks_it_verified(invented_config):
-    save(plan_source(invented_config, "test.delta", "Invented Tables"), back_up=False)
+    save_edit(
+        plan_source(invented_config, "test.delta", "Invented Tables"), back_up=False
+    )
     edit = plan_verify(invented_config, "test.delta")
     assert edit.question == (
         'Mark delta unit (mL) as checked against "Invented Tables"? Type yes to '
         "mark it verified [no]"
     )
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == "Marked delta unit (mL) as verified."
     assert load_config(invented_config).get("test.delta").verified
 
@@ -216,7 +218,7 @@ def test_set_a_folder_in_single_quotes_and_clear_it(invented_config):
     before = config_text(invented_config)
     edit = plan_folder(invented_config, "Compounds", r'"D:\Lab\Compound tables"')
     assert edit.question == ""
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == r"Tables for compounds will be saved in D:\Lab\Compound tables."
     after = config_text(invented_config)
     assert r"compounds = 'D:\Lab\Compound tables'" in after
@@ -226,7 +228,7 @@ def test_set_a_folder_in_single_quotes_and_clear_it(invented_config):
     )
 
     edit = plan_folder(invented_config, "compounds", '""')
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     assert edit.done == (
         "Cleared the compounds folder, so its tables are saved in the workspace's "
         "results folder."
@@ -235,7 +237,9 @@ def test_set_a_folder_in_single_quotes_and_clear_it(invented_config):
 
 
 def test_a_folder_with_an_apostrophe_uses_double_quotes(invented_config):
-    save(plan_folder(invented_config, "compounds", "D:/Sam's tables"), back_up=False)
+    save_edit(
+        plan_folder(invented_config, "compounds", "D:/Sam's tables"), back_up=False
+    )
     assert 'compounds = "D:/Sam\'s tables"' in config_text(invented_config)
     assert load_config(invented_config).folder("compounds") == "D:/Sam's tables"
 
@@ -253,7 +257,7 @@ def test_a_folder_setting_is_added_when_the_file_has_no_folders(invented_config)
     text = path.read_text(encoding="utf-8")
     path.write_text(text[: text.index("[folders]")], encoding="utf-8")
     # The invented template's own setting is 'tables', so set another one.
-    save(plan_folder(invented_config, "compounds", "other"), back_up=False)
+    save_edit(plan_folder(invented_config, "compounds", "other"), back_up=False)
     assert load_config(invented_config).folder("compounds") == "other"
     assert config_text(invented_config).startswith(text[: text.index("[folders]")])
 
@@ -270,7 +274,7 @@ def test_an_entry_only_in_the_template_is_copied_first(invented_config):
     )
     # Answering no keeps the file as it was.
     assert path.read_text(encoding="utf-8") == without
-    save(edit, back_up=False)
+    save_edit(edit, back_up=False)
     after = path.read_text(encoding="utf-8")
     assert after.startswith(without)
     assert '[test.delta]\nname = "delta unit"\nvalue = "µL"\n' in after
@@ -284,8 +288,10 @@ def test_windows_line_endings_and_same_line_comments_are_kept(invented_config):
         "value = 2.5", "value = 2.5  # invented note"
     )
     path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
-    save(plan_set(invented_config, "test.alpha", "3"), back_up=False)
-    save(plan_set(invented_config, "test.gamma", "1 low, 2 mid, high"), back_up=False)
+    save_edit(plan_set(invented_config, "test.alpha", "3"), back_up=False)
+    save_edit(
+        plan_set(invented_config, "test.gamma", "1 low, 2 mid, high"), back_up=False
+    )
     after = path.read_bytes().decode("utf-8")
     assert after.count("\n") == after.count("\r\n")
     assert "value = 3  # invented note\r\n" in after
@@ -295,10 +301,12 @@ def test_save_backs_up_the_old_file_when_asked(invented_config):
     path = invented_config / "config.toml"
     before = path.read_bytes()
     edit = plan_set(invented_config, "test.alpha", "3")
-    backup = save(edit, back_up=True)
+    backup = save_edit(edit, back_up=True)
     assert backup.name.startswith("config.toml.bak-")
     assert backup.read_bytes() == before
-    assert save(plan_set(invented_config, "test.alpha", "4"), back_up=False) is None
+    assert (
+        save_edit(plan_set(invented_config, "test.alpha", "4"), back_up=False) is None
+    )
     assert list(invented_config.glob("config.toml.bak-*")) == [backup]
 
 
@@ -308,7 +316,7 @@ def test_save_refuses_when_the_file_changed_after_the_question(invented_config):
     path.write_text(config_text(invented_config) + "\n# saved in Notepad\n", "utf-8")
     changed = path.read_bytes()
     with pytest.raises(ConfigError) as error:
-        save(edit, back_up=True)
+        save_edit(edit, back_up=True)
     assert str(error.value) == (
         "config.toml changed while you were answering, so nothing was saved. "
         "Type the command again."
@@ -326,7 +334,7 @@ def test_a_failed_save_leaves_the_old_file_whole(invented_config, monkeypatch):
 
     monkeypatch.setattr(config_edit.os, "replace", refuse)
     with pytest.raises(ConfigError) as error:
-        save(plan_set(invented_config, "test.alpha", "3"), back_up=False)
+        save_edit(plan_set(invented_config, "test.alpha", "3"), back_up=False)
     assert str(error.value) == (
         f"Couldn't save {path}: Access is denied. Nothing was changed. If it is "
         "open in another program, close it and try again."

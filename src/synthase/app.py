@@ -108,11 +108,22 @@ from synthase.compounds import (
     unlink_spectrum,
 )
 from synthase.config import ConfigError, ConfigValue, load_config
+from synthase.config_edit import (
+    Edit,
+    plan_folder,
+    plan_set,
+    plan_source,
+    plan_verify,
+    save_edit,
+)
 from synthase.config_text import (
+    BACKED_UP,
     CONFIG_HEADINGS,
+    EDIT_USAGE,
     EVERY_ENTRY,
     ONE_NAME,
     UNVERIFIED,
+    Settings,
     config_entries,
     config_row,
     count_line,
@@ -543,6 +554,8 @@ class SynthaseApp(App):
         # The last choices Tab listed, so the same list isn't printed twice in a row.
         self.listed: tuple[str, ...] = ()
         self.asking: Asking | None = None
+        # The config files backed up this session, before their first change.
+        self.backed_up: set[Path] = set()
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(Welcome(), id="output")
@@ -610,7 +623,7 @@ class SynthaseApp(App):
         elif command.name == DOCTOR:
             self.run_doctor()
         elif command.name == CONFIG:
-            self.run_config(text.split()[1:])
+            self.run_config(" ".join(text.split(maxsplit=1)[1:]))
         elif command.name == INIT:
             self.run_init(text.split(maxsplit=1)[1:])
         elif command.name == COMPOUND:
@@ -643,17 +656,21 @@ class SynthaseApp(App):
         self.show(last)
         self.refresh_status()
 
-    def run_config(self, names: list[str]) -> None:
-        """The settings, or one value in full, checked as syn doctor checks them."""
+    def run_config(self, rest: str) -> None:
+        """The settings, or one value in full, checked as syn doctor checks them.
+
+        ``rest`` is everything typed after /config. A first word such as set
+        changes a setting instead (decision 0017).
+        """
+        names = rest.split()
+        if names and names[0].lower() in EDIT_USAGE:
+            self.edit_config(names[0].lower(), rest.split(maxsplit=1)[1:])
+            return
         if len(names) > 1:
             self.say("error", ONE_NAME)
             return
-        settings = read_settings(init="/init")
-        self.refresh_status()
-        if settings.problem is not None:
-            self.say("error", in_app(settings.problem.text))
-            if settings.problem.fix:
-                self.say("hint", f"Fix: {settings.problem.fix}")
+        settings = self.read_config_settings()
+        if settings is None:
             return
         config = settings.config
         if names:
@@ -672,6 +689,77 @@ class SynthaseApp(App):
         unverified = any(not entry.verified for entry in entries)
         self.say("warning" if unverified else "success", count_line(config))
         self.show(DoctorChecks("", settings.folders))
+
+    def read_config_settings(self) -> Settings | None:
+        """The checked settings, or None after saying what doctor says is wrong."""
+        settings = read_settings(init="/init")
+        self.refresh_status()
+        if settings.problem is None:
+            return settings
+        self.say("error", in_app(settings.problem.text))
+        if settings.problem.fix:
+            self.say("hint", f"Fix: {settings.problem.fix}")
+        return None
+
+    def edit_config(self, how: str, rest: list[str]) -> None:
+        """Change a setting: ``how`` is set, source, verify or folder."""
+        # verify takes one name; the others take a name, then the rest as typed.
+        typed = rest[0] if rest else ""
+        words = typed.split() if how == "verify" else typed.split(maxsplit=1)
+        if len(words) != (1 if how == "verify" else 2):
+            self.say("error", EDIT_USAGE[how])
+            return
+        settings = self.read_config_settings()
+        if settings is None:
+            return
+        workspace = Path(settings.config.path).parent
+        plan = {
+            "set": plan_set,
+            "source": plan_source,
+            "verify": plan_verify,
+            "folder": plan_folder,
+        }[how]
+        try:
+            edit = plan(workspace, *words)
+        except ConfigError as error:
+            self.say("error", str(error))
+            return
+        if edit.new_bytes is None:
+            self.say("success", edit.done)
+            return
+        if edit.note:
+            self.say("hint", edit.note)
+        folders = how == "folder"
+        if not edit.question:
+            self.save_config(edit, folders)
+            return
+        question = Question("change", edit.question, text_only(is_yes))
+
+        def done(answers: Answers) -> None:
+            if answers["change"]:
+                self.save_config(edit, folders)
+            else:
+                self.say("cancel", NOTHING_CHANGED)
+
+        self.ask(f"/config {how}", Flow((), (question,)), done, NOTHING_CHANGED)
+
+    def save_config(self, edit: Edit, folders: bool) -> None:
+        """Save ``edit``, keeping a backup before the file's first change."""
+        first = edit.path not in self.backed_up
+        try:
+            backup = save_edit(edit, back_up=first)
+        except ConfigError as error:
+            self.say("error", str(error))
+            return
+        self.backed_up.add(edit.path)
+        self.say("success", edit.done)
+        if backup is not None:
+            self.say("hint", BACKED_UP.format(name=backup.name))
+        if edit.hint:
+            self.say("hint", edit.hint)
+        settings = self.read_config_settings()
+        if folders and settings is not None:
+            self.show(DoctorChecks("", settings.folders))
 
     def run_init(self, rest: list[str]) -> None:
         """Create or find the workspace, as syn init does (decision 0009).
