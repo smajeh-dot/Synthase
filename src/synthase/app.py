@@ -6,7 +6,7 @@ All styling is in synthase.tcss and theme.py; nothing here names a colour.
 
 import argparse
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, HorizontalGroup, Vertical, VerticalScroll
 from textual.markup import escape
+from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
@@ -29,25 +30,48 @@ from synthase.commands import (
     parse_command,
     split_words,
 )
-from synthase.compound_questions import Answers, Flow, Question, is_yes, text_only
+from synthase.compound_questions import (
+    FIELDS,
+    Answers,
+    Flow,
+    Question,
+    add_flow,
+    compound_answers,
+    confirm_flow,
+    confirmed,
+    edit_flow,
+    is_yes,
+    text_only,
+)
 from synthase.compound_text import (
     EMPTY_REGISTER,
+    LABEL_NEEDED,
+    NOTHING_ADDED,
+    NOTHING_CHANGED,
     Card,
     Section,
+    added_text,
     card,
     card_lines,
+    field_sections,
     history_rows,
     list_summary,
+    more_details_text,
+    saved_changes_text,
     screen_dates,
+    section_lines,
 )
 from synthase.compounds import (
     TABLE_HEADINGS,
     Change,
     Compound,
     CompoundError,
+    add_compound,
     compound_history,
+    edit_compound,
     get_compound,
     list_compounds,
+    planned_changes,
     table_row,
 )
 from synthase.config import ConfigError, load_config
@@ -75,7 +99,7 @@ from synthase.workspace import (
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#58 and #59).
+# For a syn command whose app version hasn't been built yet (#59).
 NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
@@ -83,7 +107,7 @@ DOCTOR = "doctor"
 INIT = "init"
 COMPOUND = "compound"
 # The /compound commands the app runs so far.
-COMPOUND_IN_APP = ("show", "list", "history")
+COMPOUND_IN_APP = ("add", "edit", "show", "list", "history")
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -250,37 +274,51 @@ class CardMessage(Message):
         self.add_class("-card")
         self.card = shown
 
-    @staticmethod
-    def cells(section: Section) -> list[tuple[str, ...]]:
-        return [
-            tuple(screen_dates(cell or "-") for cell in row) for row in section.rows
-        ]
-
     def compose(self) -> ComposeResult:
         with Vertical(classes="body"):
             yield Static(self.card.title, classes="title", markup=False)
-            for section in self.card.sections:
-                if section.heading is not None:
-                    yield Static(section.heading, classes="heading", markup=False)
-                rows = self.cells(section)
-                if rows:
-                    # Batches and Spectra each have their own number of columns.
-                    kind = section.heading.lower() if section.table else "fields"
-                    with Grid(classes=f"rows -{kind}"):
-                        for row in rows:
-                            *first, last = row
-                            for cell in first:
-                                yield Label(cell, classes="name", markup=False)
-                            # The last column wraps, so a long value stays in it.
-                            yield Static(last, classes="value", markup=False)
-                for line in section.warnings:
-                    yield Flag(*flagged(screen_dates(line)))
+            yield from section_widgets(self.card.sections)
             if self.card.missing:
                 yield Flag("hint", "Still missing:")
                 for item in self.card.missing:
                     yield Static(item, classes="missing", markup=False)
             else:
                 yield Flag("success", "Nothing missing.")
+
+
+class Fields(Message):
+    """A compound's filled fields and details, as shown after adding or editing."""
+
+    def __init__(self, sections: list[Section]) -> None:
+        super().__init__("normal", "\n".join(section_lines(sections)))
+        self.add_class("-card")
+        self.sections = sections
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield from section_widgets(self.sections)
+
+
+def section_widgets(sections: Iterable[Section]) -> Iterator[Widget]:
+    """Each section's heading, rows and warnings, laid out as on the card."""
+    for section in sections:
+        if section.heading is not None:
+            yield Static(section.heading, classes="heading", markup=False)
+        rows = [
+            tuple(screen_dates(cell or "-") for cell in row) for row in section.rows
+        ]
+        if rows:
+            # Batches and Spectra each have their own number of columns.
+            kind = section.heading.lower() if section.table else "fields"
+            with Grid(classes=f"rows -{kind}"):
+                for row in rows:
+                    *first, last = row
+                    for cell in first:
+                        yield Label(cell, classes="name", markup=False)
+                    # The last column wraps, so a long value stays in it.
+                    yield Static(last, classes="value", markup=False)
+        for line in section.warnings:
+            yield Flag(*flagged(screen_dates(line)))
 
 
 class CompoundTable(Message):
@@ -520,7 +558,7 @@ class SynthaseApp(App):
         self.history = History.load(history_file())
 
     def run_compound(self, text: str) -> None:
-        """/compound show, list and history, read as syn compound reads them."""
+        """The /compound commands the app has, read as syn compound reads them."""
         try:
             words = split_words(text)[1:]
         except UsageError as error:
@@ -550,12 +588,95 @@ class SynthaseApp(App):
 
     def compound_command(self, args: argparse.Namespace) -> None:
         workspace = current_workspace()
-        if args.compound_command == "show":
+        if args.compound_command == "add":
+            self.run_add(args, workspace)
+        elif args.compound_command == "edit":
+            self.run_edit(args, workspace)
+        elif args.compound_command == "show":
             self.show(CardMessage(card(get_compound(workspace, args.id), workspace)))
         elif args.compound_command == "history":
             self.show(ChangeLog(*compound_history(workspace, args.id)))
         else:
             self.list_compounds(args, workspace)
+
+    def run_add(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Add a compound as syn compound add does: from options, or by asking."""
+        flags = {field: getattr(args, field) for field in FIELDS}
+        if all(flag is None for flag in flags.values()):
+
+            def done(answers: Answers) -> None:
+                self.finish_add(workspace, compound_answers(answers))
+
+            self.ask("/compound add", add_flow(workspace), done, NOTHING_ADDED)
+        elif args.label is None:
+            self.say("error", in_app(LABEL_NEEDED))
+        else:
+            self.finish_add(workspace, flags)
+
+    def finish_add(self, workspace: Path, values: dict[str, object]) -> None:
+        try:
+            compound = add_compound(workspace, **values)
+        except CompoundError as error:
+            self.say("error", in_app(str(error)))
+            return
+        self.say("success", added_text(compound))
+        self.show(Fields(field_sections(compound, workspace)))
+        self.say("hint", in_app(more_details_text(compound)))
+
+    def run_edit(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Edit a compound as syn compound edit does: from options, or by asking.
+
+        Every confirmation is asked before edit_compound saves anything.
+        """
+        compound = get_compound(workspace, args.id)
+        flags = {field: getattr(args, field) for field in FIELDS}
+        if any(flag is not None for flag in flags.values()):
+            self.confirm_edit(workspace, args.id, flags)
+            return
+
+        def done(answers: Answers) -> None:
+            self.confirm_edit(workspace, args.id, compound_answers(answers))
+
+        flow = edit_flow(workspace, compound)
+        self.ask("/compound edit", flow, done, NOTHING_CHANGED)
+
+    def confirm_edit(
+        self, workspace: Path, text: str, values: dict[str, object]
+    ) -> None:
+        try:
+            changes = planned_changes(workspace, text, **values)
+        except (WorkspaceError, CompoundError) as error:
+            self.say("error", in_app(str(error)))
+            return
+        flow = confirm_flow(changes)
+        if not flow.questions:
+            self.finish_edit(workspace, text, values, set(changes))
+            return
+
+        def done(answers: Answers) -> None:
+            self.finish_edit(workspace, text, values, confirmed(changes, answers))
+
+        self.ask("/compound edit", flow, done, NOTHING_CHANGED)
+
+    def finish_edit(
+        self,
+        workspace: Path,
+        text: str,
+        values: dict[str, object],
+        allowed: set[Change],
+    ) -> None:
+        try:
+            compound, changes = edit_compound(
+                workspace, text, allowed.__contains__, **values
+            )
+        except (WorkspaceError, CompoundError) as error:
+            self.say("error", in_app(str(error)))
+            return
+        if not changes:
+            self.say("normal", NOTHING_CHANGED)
+            return
+        self.say("success", saved_changes_text(compound, changes))
+        self.show(Fields(field_sections(compound, workspace)))
 
     def list_compounds(self, args: argparse.Namespace, workspace: Path) -> None:
         shown = list_compounds(
@@ -563,7 +684,7 @@ class SynthaseApp(App):
         )
         everything = list_compounds(workspace, archived=True)
         if not everything:
-            self.say("normal", EMPTY_REGISTER)
+            self.say("normal", in_app(EMPTY_REGISTER))
             return
         summary = list_summary(
             shown, everything, args.status, args.compound_class, archived=args.all
@@ -647,6 +768,8 @@ class SynthaseApp(App):
             self.say("error", str(error))
             return
         asking.answers[asking.question.key] = answer
+        if asking.question.kept is not None and not answer:
+            self.say("normal", asking.question.kept)
         self.next_question()
 
     def stop_asking(self) -> None:
@@ -708,7 +831,12 @@ class SynthaseApp(App):
 
 
 # Shared messages name syn commands; in the app they name its own.
-IN_APP = (('"syn compound list"', '"/compound list"'), ('"syn init"', '"/init"'))
+IN_APP = (
+    ('"syn compound add"', '"/compound add"'),
+    ('"syn compound edit ', '"/compound edit '),
+    ('"syn compound list"', '"/compound list"'),
+    ('"syn init"', '"/init"'),
+)
 
 
 def in_app(message: str) -> str:

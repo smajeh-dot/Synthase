@@ -13,6 +13,7 @@ from synthase.app import (
     CardMessage,
     ChangeLog,
     CompoundTable,
+    Fields,
     Flag,
     Message,
     SynthaseApp,
@@ -20,7 +21,18 @@ from synthase.app import (
 from synthase.cli import main
 from synthase.commands import ROOT_HINT, SUBCOMMANDS_HINT
 from synthase.compound_questions import add_flow
-from synthase.compounds import add_batch, add_compound, archive_compound
+from synthase.compound_text import field_sections, section_lines
+from synthase.compounds import (
+    CLASSES,
+    STATUSES,
+    Change,
+    add_batch,
+    add_compound,
+    archive_compound,
+    compound_history,
+    get_compound,
+    list_compounds,
+)
 from synthase.config import read_template
 from synthase.history import FILE_NAME
 from synthase.workspace import FOLDERS, POINTER_NAME, remember, settings_folder
@@ -201,11 +213,11 @@ def test_tab_lists_several_matches_once():
 
 def test_a_syn_command_not_in_the_app_yet_says_where_to_run_it():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/Compound Add")
-        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound add"))
-        assert NOT_YET.format(name="compound add") == (
-            "/compound add isn't in the app yet. For now, run syn compound add in "
-            "PowerShell."
+        await type_line(app, pilot, "/Compound Batch 1")
+        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound batch"))
+        assert NOT_YET.format(name="compound batch") == (
+            "/compound batch isn't in the app yet. For now, run syn compound batch "
+            "in PowerShell."
         )
 
     run(steps)
@@ -833,7 +845,7 @@ def test_an_empty_register_says_how_to_add_one(tmp_path):
         await type_line(app, pilot, "/compound list")
         assert messages(app)[-1] == (
             "normal",
-            'The register is empty. Add a compound with "syn compound add".',
+            'The register is empty. Add a compound with "/compound add".',
         )
 
     run(steps)
@@ -848,3 +860,220 @@ def test_compound_without_a_workspace_points_to_init():
         )
 
     run(steps)
+
+
+async def answer_each(app, pilot, answers):
+    """Type each answer in turn, checking the bar asks ``question`` first."""
+    for question, typed in answers:
+        assert bar_question(app) == question
+        await type_line(app, pilot, typed)
+
+
+def test_compound_add_by_answering_the_questions(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound add")
+        assert answering(app)
+        assert app.query_one("#bar").border_title == (
+            " Answering /compound add · Esc cancels "
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Label:", "Test compound A"),
+                (f"Class ({', '.join(CLASSES)}):", "Chalcone"),
+                ("SMILES:", "C1CC"),
+            ],
+        )
+        # A SMILES that can't be read is explained and asked again.
+        assert messages(app)[-1][0] == "error"
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("SMILES:", "CCO"),
+                ("Status [planned]:", ""),
+                ("Notes:", ""),
+                ("Add characterisation details (melting point, Rf)? [y/N]", "y"),
+                ("Melting range in K (e.g. 455-457):", "455-457"),
+                ("Rf (0 to 1):", ""),
+                (
+                    "Add handling details (appearance, colour, solubility, DMSO "
+                    "stock, storage)? [y/N]",
+                    "n",
+                ),
+                ("Add safety details (risk assessment, hazards)? [y/N]", ""),
+            ],
+        )
+        assert not answering(app)
+        compound = get_compound(folder, "1")
+        assert messages(app)[-3:] == [
+            ("success", "Added SYN-001: Test compound A"),
+            ("normal", "\n".join(section_lines(field_sections(compound, folder)))),
+            ("hint", 'Add more details later with "/compound edit SYN-001".'),
+        ]
+        assert "melting point" in shown(app, ".-card .name")
+
+    run(steps)
+    compound = get_compound(folder, "1")
+    assert (compound.compound_class, compound.smiles, compound.formula) == (
+        "chalcone",
+        "CCO",
+        "C2H6O",
+    )
+    _, changes = compound_history(folder, "1")
+    assert [(c.field, c.old, c.new) for c in changes] == [
+        ("label", None, "Test compound A"),
+        ("class", None, "chalcone"),
+        ("smiles", None, "CCO"),
+        ("status", None, "planned"),
+        ("melting_point", None, "455–457 K"),
+    ]
+
+
+def test_compound_add_cancelled_adds_nothing(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound add")
+        await type_line(app, pilot, "Test compound A")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was added.")
+
+    run(steps)
+    assert list_compounds(folder, archived=True) == []
+
+
+def test_compound_add_with_options_asks_nothing_and_matches_syn(tmp_path, capsys):
+    folder = invented_workspace(tmp_path, unverified=0)
+    added = []
+
+    async def steps(app, pilot):
+        await type_line(
+            app, pilot, '/compound add --label "Test compound B" --smiles CCO'
+        )
+        assert not answering(app)
+        added.extend(text for _, text in messages(app)[-3:])
+        await type_line(app, pilot, "/compound add --smiles CCO")
+        assert messages(app)[-1] == (
+            "error",
+            'Give the label with --label, or run "/compound add" with no flags '
+            "to be asked for each field.",
+        )
+        await type_line(app, pilot, "/compound add --label x --mp 999-1")
+        assert messages(app)[-1][0] == "error"
+
+    run(steps)
+    main(["compound", "add", "--label", "Test compound C", "--smiles", "CCO"])
+    printed = capsys.readouterr().out.rstrip("\n")
+    expected = (
+        printed.replace("SYN-002", "SYN-001")
+        .replace("Test compound C", "Test compound B")
+        .replace('"syn compound edit', '"/compound edit')
+    )
+    assert "\n".join(added) == expected
+    assert [c.label for c in list_compounds(folder)] == [
+        "Test compound B",
+        "Test compound C",
+    ]
+
+
+def test_compound_edit_by_answering_asks_before_each_change(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A", "chalcone", smiles="CCO")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound edit syn-1")
+        assert app.query_one("#bar").border_title == (
+            " Answering /compound edit · Esc cancels "
+        )
+        assert messages(app)[-1] == (
+            "normal",
+            "Editing SYN-001: Test compound A. Press Enter to keep a value, "
+            "or type - to clear it.",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Label [Test compound A]:", ""),
+                (f"Class ({', '.join(CLASSES)}) [chalcone]:", ""),
+                ("SMILES [CCO]:", "CCN"),
+                (f"Status ({', '.join(STATUSES)}) [planned]:", "purified"),
+                ("Notes:", "invented note"),
+                ("Edit characterisation details (melting point, Rf)? [y/N]", ""),
+                (
+                    "Edit handling details (appearance, colour, solubility, DMSO "
+                    "stock, storage)? [y/N]",
+                    "",
+                ),
+                ("Edit safety details (risk assessment, hazards)? [y/N]", ""),
+                ('Change the SMILES from "CCO" to "CCN"? [y/N]', "no"),
+            ],
+        )
+        assert messages(app)[-1] == ("normal", 'Kept the SMILES as "CCO".')
+        await answer_each(
+            app,
+            pilot,
+            [('Change the status from "planned" to "purified"? [y/N]', "yes")],
+        )
+        assert not answering(app)
+        compound = get_compound(folder, "1")
+        assert messages(app)[-2:] == [
+            ("success", "Saved 2 changes to SYN-001: Test compound A"),
+            ("normal", "\n".join(section_lines(field_sections(compound, folder)))),
+        ]
+        assert isinstance(app.query(Message).last(), Fields)
+
+    run(steps)
+    compound = get_compound(folder, "1")
+    assert (compound.smiles, compound.status, compound.notes) == (
+        "CCO",
+        "purified",
+        "invented note",
+    )
+    _, changes = compound_history(folder, "1")
+    assert changes[-2:] == [
+        Change("status", "planned", "purified", changes[-2].changed),
+        Change("notes", None, "invented note", changes[-1].changed),
+    ]
+
+
+def test_compound_edit_with_options_asks_only_confirmations(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A", smiles="CCO")
+
+    async def steps(app, pilot):
+        # Filling a blank value asks nothing.
+        await type_line(app, pilot, "/compound edit SYN-001 --mp 455-457")
+        assert not answering(app)
+        assert messages(app)[-2][1] == "Saved 1 change to SYN-001: Test compound A"
+        # Changing a set one asks; Esc cancels and changes nothing.
+        await type_line(app, pilot, "/compound edit SYN-001 --mp 450-452 --notes x")
+        assert bar_question(app) == (
+            'Change the melting point from "455–457 K" to "450–452 K"? [y/N]'
+        )
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        # A no keeps it, and with nothing else to change nothing is saved.
+        await type_line(app, pilot, "/compound edit 1 --smiles -")
+        await answer_each(app, pilot, [('Clear the SMILES ("CCO")? [y/N]', "")])
+        assert messages(app)[-2:] == [
+            ("normal", 'Kept the SMILES as "CCO".'),
+            ("normal", "Nothing was changed."),
+        ]
+        await type_line(app, pilot, "/compound edit 1 --rf 0.4")
+        assert messages(app)[-1][1].startswith("An Rf value needs the solvent system")
+        await type_line(app, pilot, "/compound edit 9 --notes x")
+        assert messages(app)[-1][1].endswith('Run "/compound list" to see every ID.')
+        assert not answering(app)
+
+    run(steps)
+    compound = get_compound(folder, "1")
+    assert (compound.smiles, compound.notes) == ("CCO", None)
+    assert str(compound.melting_point) == "455–457 K"
+    assert len(compound_history(folder, "1")[1]) == 4
