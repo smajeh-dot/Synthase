@@ -17,6 +17,7 @@ from synthase.compounds import (
     DEFAULT_STATUS,
     DETAIL_GROUPS,
     DETAIL_PARSERS,
+    DETAILS,
     SPECTRUM_KINDS,
     STATUSES,
     Batch,
@@ -41,6 +42,9 @@ from synthase.compounds import (
 
 # The answers given so far, by question key.
 type Answers = dict[str, object]
+
+# The fields add and edit take, as Compound attributes and option names.
+FIELDS = ("label", "compound_class", "smiles", "status", "notes", *DETAILS)
 
 # What each group of details covers, and the question for each field.
 GROUP_CONTENTS = {
@@ -77,7 +81,8 @@ class Question:
     so far, into the answer, or raises CompoundError saying what is wrong.
     ``skippable`` says whether Enter is accepted. A ``yes_no`` question is a
     [y/N] question: only yes or y counts as yes. ``asked`` says, from the
-    earlier answers, whether the question is asked at all.
+    earlier answers, whether the question is asked at all. ``kept`` is the
+    line shown when a [y/N] question is answered anything but yes.
     """
 
     key: str
@@ -87,6 +92,7 @@ class Question:
     skippable: bool = True
     yes_no: bool = False
     asked: Callable[[Answers], bool] = always
+    kept: str | None = None
 
     @property
     def prompt(self) -> str:
@@ -399,10 +405,43 @@ def change_name(change: Change) -> str:
 
 def change_question(change: Change) -> str:
     """The [y/N] question asked before changing or clearing a set value."""
+    return confirm_question("change", change).prompt
+
+
+def confirm_question(key: str, change: Change) -> Question:
+    """``change_question`` as a question, with ``kept_message`` for a no."""
     name = change_name(change)
     if change.new is None:
-        return f'Clear {name} ("{change.old}")? [y/N] '
-    return f'Change {name} from "{change.old}" to "{change.new}"? [y/N] '
+        text = f'Clear {name} ("{change.old}")?'
+    else:
+        text = f'Change {name} from "{change.old}" to "{change.new}"?'
+    return Question(
+        key, text, text_only(is_yes), yes_no=True, kept=kept_message(change)
+    )
+
+
+def confirm_flow(changes: list[Change]) -> Flow:
+    """A question for each change to a set value, keyed by its place in ``changes``.
+
+    Filling a blank value needs no question.
+    """
+    return Flow(
+        (),
+        tuple(
+            confirm_question(str(number), change)
+            for number, change in enumerate(changes)
+            if change.old is not None
+        ),
+    )
+
+
+def confirmed(changes: list[Change], answers: Answers) -> set[Change]:
+    """The changes confirm_flow's ``answers`` allow: every fill, and each yes."""
+    return {
+        change
+        for number, change in enumerate(changes)
+        if change.old is None or answers[str(number)]
+    }
 
 
 def kept_message(change: Change) -> str:

@@ -43,6 +43,7 @@ from synthase.compounds import (
     parse_stock,
     parse_yes_no,
     parse_yield,
+    planned_changes,
     purity_warnings,
     read_smiles,
     remove_batch,
@@ -395,6 +396,31 @@ def test_a_new_smiles_updates_formula_and_molar_mass(tmp_path):
     cleared, _ = edit_compound(tmp_path, "1", say(True), smiles="-")
     assert cleared.smiles is cleared.formula is cleared.molar_mass is None
     assert get_compound(tmp_path, "1") == cleared
+
+
+def test_planned_changes_match_the_edit_and_save_nothing(tmp_path):
+    add_compound(tmp_path, "Test compound A", smiles="CCO", notes="invented note")
+    given = {"smiles": "CCN", "notes": "-", "status": "planned", "storage": "fridge"}
+    planned = planned_changes(tmp_path, "SYN-001", **given)
+    assert planned == [
+        Change("smiles", "CCO", "CCN"),
+        Change("notes", "invented note", None),
+        Change("storage", None, "fridge"),
+    ]
+    # Adding logged label, SMILES, status and notes; planning logs nothing.
+    assert len(rows(tmp_path, "SELECT * FROM changes")) == 4
+    confirm = say(True)
+    _, changes = edit_compound(tmp_path, "1", confirm, **given)
+    assert changes == planned
+    assert confirm.asked == planned[:2]
+
+
+def test_planned_changes_refuse_what_the_edit_refuses(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    with pytest.raises(CompoundError, match="solvent system"):
+        planned_changes(tmp_path, "1", rf="0.4")
+    with pytest.raises(CompoundError, match="SYN-002"):
+        planned_changes(tmp_path, "2", notes="invented")
 
 
 def test_only_confirmed_changes_are_made(tmp_path):
