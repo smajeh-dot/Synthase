@@ -34,7 +34,8 @@ ROOT = command_list()
         ("/compound e", "/compound edit"),
         ("  /doc", "  /doctor "),
         ("/he", "/help "),
-        ("/help co", "/help compound "),
+        ("/help com", "/help compound "),
+        ("/con", "/config "),
         ("/help compound ba", "/help compound batch "),
     ],
 )
@@ -47,7 +48,8 @@ def test_one_match_or_a_longer_shared_start_completes(typed, completed):
     [
         ("/compound edit", ("edit", "edit-batch")),
         ("/compound edit 1 --rf", ("--rf", "--rf-solvent")),
-        ("/", ("/compound", "/doctor", "/help", "/init", "/quit")),
+        ("/", ("/compound", "/config", "/doctor", "/help", "/init", "/quit")),
+        ("/help co", ("compound", "config")),
     ],
 )
 def test_several_matches_are_listed_and_the_text_is_kept(typed, choices):
@@ -110,6 +112,7 @@ def test_help_lists_every_command_then_how_to_get_more():
         "/init",
         "/doctor",
         "/compound",
+        "/config",
         "/help",
         "/quit",
     ]
@@ -180,7 +183,8 @@ def test_help_and_version_options_are_not_in_the_help():
     [
         (
             ["foo"],
-            'There\'s no help on "foo". Topics: init, doctor, compound, help, quit.',
+            'There\'s no help on "foo". '
+            "Topics: init, doctor, compound, config, help, quit.",
         ),
         (
             ["/compound", "zzz"],

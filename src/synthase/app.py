@@ -107,7 +107,20 @@ from synthase.compounds import (
     table_row,
     unlink_spectrum,
 )
-from synthase.config import ConfigError, load_config
+from synthase.config import ConfigError, ConfigValue, load_config
+from synthase.config_text import (
+    CONFIG_HEADINGS,
+    EVERY_ENTRY,
+    ONE_NAME,
+    UNVERIFIED,
+    config_entries,
+    config_row,
+    count_line,
+    entry_key,
+    entry_rows,
+    read_settings,
+    settings_heading,
+)
 from synthase.doctor import Check, ReportText, report_text, run_checks
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
@@ -135,6 +148,7 @@ UNKNOWN = "unknown command, try /help"
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
+CONFIG = "config"
 INIT = "init"
 COMPOUND = "compound"
 # The top rule's title while a command is asking questions.
@@ -194,10 +208,14 @@ class HelpMessage(Message):
 
 
 class DoctorChecks(Message):
-    """The /doctor heading, then each check's word and text in two columns."""
+    """The /doctor heading, then each check's word and text in two columns.
 
-    def __init__(self, heading: str, checks: list[Check]) -> None:
-        lines = [heading, ""]
+    With no heading, only the checks, e.g. the folder lines /config shows.
+    """
+
+    def __init__(self, heading: str, checks: Iterable[Check]) -> None:
+        checks = list(checks)
+        lines = [heading, ""] if heading else []
         for check in checks:
             lines.append(f"{check.word:<6}{check.text}")
             if check.fix:
@@ -209,7 +227,8 @@ class DoctorChecks(Message):
 
     def compose(self) -> ComposeResult:
         with Vertical(classes="body"):
-            yield Static(self.heading, classes="heading", markup=False)
+            if self.heading:
+                yield Static(self.heading, classes="heading", markup=False)
             with Grid(classes="rows"):
                 for check in self.checks:
                     kind = "-ok" if check.passed else "-fail"
@@ -242,6 +261,56 @@ class UnverifiedValues(Message):
                         yield Static(value, classes="value", markup=False)
                         yield Label("", classes="key")
                         yield Static(source, classes="value", markup=False)
+
+
+def verified_kind(text: str) -> str:
+    """The classes that colour a verified cell; its words carry the meaning."""
+    return "verified -no" if text == UNVERIFIED else "verified -yes"
+
+
+class ConfigTable(Message):
+    """The /config heading, then a row per value under a bold heading row."""
+
+    def __init__(self, heading: str, entries: list[ConfigValue]) -> None:
+        self.heading = heading
+        self.rows = [config_row(entry) for entry in entries]
+        lines = [heading, *("  ".join(row) for row in [CONFIG_HEADINGS, *self.rows])]
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-config")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.heading, classes="title", markup=False)
+            with Grid(classes="rows"):
+                for heading in CONFIG_HEADINGS:
+                    yield Label(heading, classes="heading", markup=False)
+                for row in self.rows:
+                    *first, verified, source = row
+                    for cell in first:
+                        yield Label(cell, classes="cell", markup=False)
+                    kind = verified_kind(verified)
+                    yield Label(verified, classes=f"cell {kind}", markup=False)
+                    yield Label(source, classes="cell", markup=False)
+
+
+class ConfigEntry(Message):
+    """One value in full: its key in bold, then each field and what it is."""
+
+    def __init__(self, entry: ConfigValue) -> None:
+        self.title = entry.key
+        self.rows = entry_rows(entry)
+        lines = [self.title, *(f"{name}  {text}" for name, text in self.rows)]
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-entry")
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.title, classes="title", markup=False)
+            with Grid(classes="rows"):
+                for name, text in self.rows:
+                    yield Label(name, classes="name", markup=False)
+                    kind = verified_kind(text) if name == "Verified" else ""
+                    yield Static(text, classes=f"text {kind}", markup=False)
 
 
 class Answered(Message):
@@ -540,6 +609,8 @@ class SynthaseApp(App):
             self.show_help(text.split()[1:])
         elif command.name == DOCTOR:
             self.run_doctor()
+        elif command.name == CONFIG:
+            self.run_config(text.split()[1:])
         elif command.name == INIT:
             self.run_init(text.split(maxsplit=1)[1:])
         elif command.name == COMPOUND:
@@ -571,6 +642,36 @@ class SynthaseApp(App):
         last.add_class("-doctor-last")
         self.show(last)
         self.refresh_status()
+
+    def run_config(self, names: list[str]) -> None:
+        """The settings, or one value in full, checked as syn doctor checks them."""
+        if len(names) > 1:
+            self.say("error", ONE_NAME)
+            return
+        settings = read_settings(init="/init")
+        self.refresh_status()
+        if settings.problem is not None:
+            self.say("error", in_app(settings.problem.text))
+            if settings.problem.fix:
+                self.say("hint", f"Fix: {settings.problem.fix}")
+            return
+        config = settings.config
+        if names:
+            try:
+                entry = config.get(entry_key(names[0]))
+            except ConfigError as error:
+                self.say("error", str(error))
+                self.say("hint", EVERY_ENTRY)
+                return
+            self.show(ConfigEntry(entry))
+            if entry.warning:
+                self.say("warning", entry.warning)
+            return
+        entries = config_entries(config)
+        self.show(ConfigTable(settings_heading(config), entries))
+        unverified = any(not entry.verified for entry in entries)
+        self.say("warning" if unverified else "success", count_line(config))
+        self.show(DoctorChecks("", settings.folders))
 
     def run_init(self, rest: list[str]) -> None:
         """Create or find the workspace, as syn init does (decision 0009).
