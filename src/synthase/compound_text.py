@@ -27,6 +27,12 @@ from synthase.config import ConfigError, load_config
 from synthase.numbers import sig_figs
 
 EMPTY_REGISTER = 'The register is empty. Add a compound with "syn compound add".'
+LABEL_NEEDED = (
+    'Give the label with --label, or run "syn compound add" with no flags '
+    "to be asked for each field."
+)
+NOTHING_ADDED = "Nothing was added."
+NOTHING_CHANGED = "Nothing was changed."
 ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
@@ -57,6 +63,21 @@ class Card:
 def title(compound: Compound) -> str:
     archived = " (archived)" if compound.archived else ""
     return f"{compound.id}: {compound.label}{archived}"
+
+
+def added_text(compound: Compound) -> str:
+    return f"Added {compound.id}: {compound.label}"
+
+
+def more_details_text(compound: Compound) -> str:
+    """The hint shown after adding, under the fields."""
+    return f'Add more details later with "syn compound edit {compound.id}".'
+
+
+def saved_changes_text(compound: Compound, changes: list[Change]) -> str:
+    count = len(changes)
+    plural = "" if count == 1 else "s"
+    return f"Saved {count} change{plural} to {compound.id}: {compound.label}"
 
 
 def field_sections(compound: Compound, workspace: Path) -> list[Section]:

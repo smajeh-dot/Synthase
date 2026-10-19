@@ -10,6 +10,8 @@ from synthase.compound_questions import (
     batch_flow,
     change_question,
     compound_answers,
+    confirm_flow,
+    confirmed,
     edit_batch_flow,
     edit_flow,
     is_yes,
@@ -291,3 +293,26 @@ def test_unlink_with_nothing_linked_is_refused(workspace):
 def test_change_confirmation_wording(change, question, kept):
     assert change_question(change) == question
     assert kept_message(change) == kept
+
+
+def test_confirm_flow_asks_only_about_set_values():
+    changes = [
+        Change("smiles", "CCO", "CCN"),
+        Change("storage", None, "fridge"),
+        Change("notes", "invented note", None),
+    ]
+    flow = confirm_flow(changes)
+    assert flow.opening == ()
+    assert [q.prompt for q in flow.questions] == [
+        change_question(changes[0]),
+        change_question(changes[2]),
+    ]
+    assert [q.kept for q in flow.questions] == [
+        kept_message(changes[0]),
+        kept_message(changes[2]),
+    ]
+    answers = {}
+    for question, typed in zip(flow.questions, ["Y", "nope"], strict=True):
+        answers[question.key] = question.answer(typed, answers)
+    assert flow.next_question(answers) is None
+    assert confirmed(changes, answers) == {changes[0], changes[1]}

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from synthase import __version__
 from synthase.compound_questions import (
+    FIELDS,
     Answers,
     Flow,
     add_flow,
@@ -23,6 +24,10 @@ from synthase.compound_questions import (
 )
 from synthase.compound_text import (
     EMPTY_REGISTER,
+    LABEL_NEEDED,
+    NOTHING_ADDED,
+    NOTHING_CHANGED,
+    added_text,
     aligned,
     batch_cells,
     card,
@@ -30,6 +35,8 @@ from synthase.compound_text import (
     field_sections,
     history_lines,
     list_summary,
+    more_details_text,
+    saved_changes_text,
     section_lines,
     spectrum_cells,
     spectrum_name,
@@ -37,7 +44,6 @@ from synthase.compound_text import (
 from synthase.compounds import (
     CLASSES,
     DEFAULT_STATUS,
-    DETAILS,
     SPECTRUM_KINDS,
     STATUSES,
     TABLE_HEADINGS,
@@ -160,14 +166,6 @@ COMPOUND_UNLINK_HELP = (
     'touched, and the link stays in "syn compound history". With no file, '
     "Synthase lists the linked files and asks which one."
 )
-
-LABEL_NEEDED = (
-    'Give the label with --label, or run "syn compound add" with no flags '
-    "to be asked for each field."
-)
-
-# The fields add and edit take, as Compound attributes and option names.
-FIELDS = ("label", "compound_class", "smiles", "status", "notes", *DETAILS)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -491,7 +489,7 @@ def compound_add(args: argparse.Namespace) -> int:
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was added.", file=sys.stderr)
+        print(NOTHING_ADDED, file=sys.stderr)
         return 1
     print_added(compound, workspace)
     return 0
@@ -578,15 +576,12 @@ def compound_edit(args: argparse.Namespace) -> int:
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was changed.", file=sys.stderr)
+        print(NOTHING_CHANGED, file=sys.stderr)
         return 1
     if not changes:
-        print("Nothing was changed.")
+        print(NOTHING_CHANGED)
         return 0
-    print(
-        f"Saved {len(changes)} change{'' if len(changes) == 1 else 's'} "
-        f"to {compound.id}: {compound.label}"
-    )
+    print(saved_changes_text(compound, changes))
     print_fields(compound, workspace)
     return 0
 
@@ -679,9 +674,9 @@ def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) ->
 
 
 def print_added(compound: Compound, workspace: Path) -> None:
-    print(f"Added {compound.id}: {compound.label}")
+    print(added_text(compound))
     print_fields(compound, workspace)
-    print(f'Add more details later with "syn compound edit {compound.id}".')
+    print(more_details_text(compound))
 
 
 def print_fields(compound: Compound, workspace: Path) -> None:

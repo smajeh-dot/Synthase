@@ -766,25 +766,12 @@ def edit_compound(
         "notes": notes,
         **details,
     }
-    wanted = {}
-    for column, attribute in LOGGED_FIELDS:
-        value = given.get(attribute)
-        if value is None or not value.strip():
-            continue
-        new = parse_field(workspace, compound.number, column, value)
-        if new != getattr(compound, attribute):
-            wanted[attribute] = new
-    _check_rf(replace(compound, **wanted))
     changes = []
     updates = {}
-    for column, attribute in LOGGED_FIELDS:
-        if attribute not in wanted:
-            continue
-        old = getattr(compound, attribute)
-        change = Change(column, as_text(old), as_text(wanted[attribute]))
-        if old is None or confirm(change):
+    for attribute, new, change in _wanted(workspace, compound, given):
+        if change.old is None or confirm(change):
             changes.append(change)
-            updates[attribute] = wanted[attribute]
+            updates[attribute] = new
     if not changes:
         return compound, []
 
@@ -805,6 +792,48 @@ def edit_compound(
         )
         _log(db, compound.number, changes)
     return compound, changes
+
+
+def planned_changes(workspace: Path, text: str, **given: str | None) -> list[Change]:
+    """The changes edit_compound would make to compound ``text``, saving nothing.
+
+    ``given`` is as for edit_compound, and every value is checked the same
+    way. A change whose old value is set is one edit_compound asks about, so
+    a caller can ask every question before calling it.
+    """
+    compound = get_compound(workspace, text)
+    return [change for _, _, change in _wanted(workspace, compound, given)]
+
+
+def _wanted(
+    workspace: Path, compound: Compound, given: dict[str, str | None]
+) -> list[tuple[str, object, Change]]:
+    """Each field ``given`` changes: its attribute, new value and change.
+
+    Raises CompoundError for a refused value, or an Rf left without its solvent.
+    """
+    wanted = {}
+    for column, attribute in LOGGED_FIELDS:
+        value = given.get(attribute)
+        if value is None or not value.strip():
+            continue
+        new = parse_field(workspace, compound.number, column, value)
+        if new != getattr(compound, attribute):
+            wanted[attribute] = new
+    _check_rf(replace(compound, **wanted))
+    return [
+        (
+            attribute,
+            wanted[attribute],
+            Change(
+                column,
+                as_text(getattr(compound, attribute)),
+                as_text(wanted[attribute]),
+            ),
+        )
+        for column, attribute in LOGGED_FIELDS
+        if attribute in wanted
+    ]
 
 
 def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compound:
