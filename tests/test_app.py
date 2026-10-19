@@ -213,10 +213,10 @@ def test_tab_lists_several_matches_once():
 
 def test_a_syn_command_not_in_the_app_yet_says_where_to_run_it():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/Compound Batch 1")
-        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound batch"))
-        assert NOT_YET.format(name="compound batch") == (
-            "/compound batch isn't in the app yet. For now, run syn compound batch "
+        await type_line(app, pilot, "/Compound Unlink 1")
+        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound unlink"))
+        assert NOT_YET.format(name="compound unlink") == (
+            "/compound unlink isn't in the app yet. For now, run syn compound unlink "
             "in PowerShell."
         )
 
@@ -1125,3 +1125,180 @@ def test_compound_archive_asks_first_and_restore_does_not(tmp_path):
         ("archived", "no", "yes"),
         ("archived", "yes", "no"),
     ]
+
+
+def test_compound_batch_by_answering_and_with_options(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    today = date.today().strftime("%d/%m/%Y")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound batch 1")
+        assert messages(app)[-1] == (
+            "normal",
+            "New batch of SYN-001: Test compound A. Press Enter for today's date, "
+            "or to skip the mass or the yield.",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Date made (e.g. 18/10/2026):", ""),
+                ("Mass made (e.g. 152 mg):", ""),
+                ("Yield in % (e.g. 64.2):", ""),
+            ],
+        )
+        # Neither a mass nor a yield is explained, and the yield is asked again.
+        assert messages(app)[-1] == (
+            "error",
+            "A batch needs its mass made, its yield or both.",
+        )
+        await answer_each(app, pilot, [("Yield in % (e.g. 64.2):", "104")])
+        assert not answering(app)
+        assert messages(app)[-4:] == [
+            ("success", "Added batch 1 to SYN-001: Test compound A"),
+            ("normal", f"1  {today}  -  104%"),
+            (
+                "caution",
+                "A yield over 100% usually means the product is still wet or impure.",
+            ),
+            (
+                "hint",
+                'SYN-001 is still "planned". Change it with '
+                '"/compound edit SYN-001 --status synthesised".',
+            ),
+        ]
+        assert shown(app, ".rows.-batches .name")[-3:] == ["1", today, "-"]
+        await type_line(app, pilot, "/compound batch 1")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was added.")
+        await type_line(app, pilot, "/compound edit 1 --status synthesised")
+        await type_line(app, pilot, "y")
+        await type_line(
+            app,
+            pilot,
+            '/compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
+        )
+        assert not answering(app)
+        assert messages(app)[-2:] == [
+            ("success", "Added batch 2 to SYN-001: Test compound A"),
+            ("normal", "2  18/10/2026  152 mg  64.2%"),
+        ]
+        await type_line(app, pilot, "/compound batch 1 --mass 152")
+        assert messages(app)[-1] == (
+            "error",
+            "Give the unit as well, mg or g, such as 152 mg.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [c.new for c in changes if c.field == "batch"] == [
+        f"1: {date.today().isoformat()}, 104%",
+        "2: 2026-10-18, 152 mg, 64.2%",
+    ]
+
+
+def test_compound_edit_batch_asks_before_each_change(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound edit-batch 1 1")
+        assert messages(app)[-1] == (
+            "normal",
+            "Editing batch 1 of SYN-001: Test compound A. Press Enter to keep a "
+            "value, or type - to clear the mass or yield.",
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Date made [18/10/2026]:", "17/10/2026"),
+                ("Mass made [152 mg]:", "125 mg"),
+                ("Yield in % [64.2%]:", "-"),
+                (
+                    'Change batch 1\'s date from "18/10/2026" to "17/10/2026"? [y/N]',
+                    "n",
+                ),
+            ],
+        )
+        assert messages(app)[-1] == ("normal", 'Kept batch 1\'s date as "18/10/2026".')
+        await answer_each(
+            app,
+            pilot,
+            [
+                ('Change batch 1\'s mass from "152 mg" to "125 mg"? [y/N]', "y"),
+                ('Clear batch 1\'s yield ("64.2%")? [y/N]', "yes"),
+            ],
+        )
+        assert not answering(app)
+        assert messages(app)[-2:] == [
+            ("success", "Saved 2 changes to batch 1 of SYN-001: Test compound A"),
+            ("normal", "1  18/10/2026  125 mg  -"),
+        ]
+        # Filling a blank value asks nothing.
+        await type_line(app, pilot, "/compound edit-batch SYN-001 1 --yield 50")
+        assert not answering(app)
+        assert messages(app)[-2][1] == (
+            "Saved 1 change to batch 1 of SYN-001: Test compound A"
+        )
+        # Clearing both is refused before anything is asked.
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass - --yield -")
+        assert not answering(app)
+        assert messages(app)[-1] == (
+            "error",
+            "A batch needs its mass made, its yield or both.",
+        )
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 1")
+        assert messages(app)[-1][0] == "error"
+        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 99mg")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        await type_line(app, pilot, "/compound edit-batch 1 4 --mass 99mg")
+        assert messages(app)[-1] == (
+            "error",
+            "SYN-001 has no batch 4. Its batches are 1.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [(c.field, c.old, c.new) for c in changes[-3:]] == [
+        ("batch 1 mass", "152 mg", "125 mg"),
+        ("batch 1 yield", "64.2%", None),
+        ("batch 1 yield", None, "50.0%"),
+    ]
+
+
+def test_compound_remove_batch_asks_first_and_keeps_the_numbers(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A", status="synthesised")
+    add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
+    add_batch(folder, "1", date(2026, 10, 18), 0.140, 50.0)
+    question = (
+        "Remove batch 2 of SYN-001 (18/10/2026, 140 mg, 50.0%)? It is hidden from "
+        "the card but kept in the history, and the other batches keep their "
+        "numbers. [y/N]"
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await answer_each(app, pilot, [(question, "no")])
+        assert messages(app)[-1] == ("normal", "Kept batch 2 of SYN-001 as it was.")
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await answer_each(app, pilot, [(question, "y")])
+        assert messages(app)[-1] == (
+            "success",
+            "Removed batch 2 from SYN-001: Test compound A. "
+            'It stays in "/compound history SYN-001".',
+        )
+        await type_line(app, pilot, "/compound remove-batch 1 2")
+        assert messages(app)[-1][1].startswith("Batch 2 of SYN-001 was removed on ")
+        await type_line(app, pilot, "/compound batch 1 --mass 99mg")
+        assert messages(app)[-2][1] == "Added batch 3 to SYN-001: Test compound A"
+        await type_line(app, pilot, "/compound show 1")
+        assert shown(app, "CardMessage .rows.-batches .name")[::3] == ["1", "3"]
+
+    run(steps)

@@ -20,6 +20,7 @@ from synthase.compound_questions import (
     edit_flow,
     is_yes,
     kept_message,
+    remove_batch_question,
     spectrum_flow,
     unlink_flow,
 )
@@ -31,7 +32,10 @@ from synthase.compound_text import (
     added_text,
     aligned,
     archived_text,
+    batch_added_text,
     batch_cells,
+    batch_removed_text,
+    batch_saved_text,
     card,
     card_lines,
     field_sections,
@@ -43,6 +47,7 @@ from synthase.compound_text import (
     section_lines,
     spectrum_cells,
     spectrum_name,
+    still_planned_text,
 )
 from synthase.compounds import (
     CLASSES,
@@ -50,6 +55,7 @@ from synthase.compounds import (
     SPECTRUM_KINDS,
     STATUSES,
     TABLE_HEADINGS,
+    Batch,
     Change,
     Compound,
     CompoundError,
@@ -65,9 +71,7 @@ from synthase.compounds import (
     get_spectrum,
     link_spectrum,
     list_compounds,
-    parse_batch_date,
-    parse_mass,
-    parse_yield,
+    parse_batch,
     remove_batch,
     table_row,
     unlink_spectrum,
@@ -693,29 +697,27 @@ def compound_batch(args: argparse.Namespace) -> int:
             mass_g = answers["mass_g"]
             yield_percent = answers["yield_percent"]
         else:
-            made_on = parse_batch_date(args.date or "")
-            mass_g = None if args.mass is None else parse_mass(args.mass)
-            yield_percent = (
-                None if args.yield_percent is None else parse_yield(args.yield_percent)
-            )
+            made_on, mass_g, yield_percent = parse_batch(*flags)
         compound, batch = add_batch(workspace, args.id, made_on, mass_g, yield_percent)
     except CompoundError as error:
         print(error, file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was added.", file=sys.stderr)
+        print(NOTHING_ADDED, file=sys.stderr)
         return 1
-    print(f"Added batch {batch.number} to {compound.id}: {compound.label}")
+    print(batch_added_text(compound, batch))
+    print_batch(batch)
+    if planned := still_planned_text(compound):
+        print(planned)
+    return 0
+
+
+def print_batch(batch: Batch) -> None:
+    """Print ``batch`` as the card's Batches row, then any warning about it."""
     print(f"  {aligned([batch_cells(batch)])[0]}")
     if batch.warning:
         print(batch.warning)
-    if compound.status == DEFAULT_STATUS:
-        print(
-            f'{compound.id} is still "{DEFAULT_STATUS}". Change it with '
-            f'"syn compound edit {compound.id} --status synthesised".'
-        )
-    return 0
 
 
 def compound_edit_batch(args: argparse.Namespace) -> int:
@@ -741,18 +743,13 @@ def compound_edit_batch(args: argparse.Namespace) -> int:
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was changed.", file=sys.stderr)
+        print(NOTHING_CHANGED, file=sys.stderr)
         return 1
     if not changes:
-        print("Nothing was changed.")
+        print(NOTHING_CHANGED)
         return 0
-    print(
-        f"Saved {len(changes)} change{'' if len(changes) == 1 else 's'} "
-        f"to batch {batch.number} of {compound.id}: {compound.label}"
-    )
-    print(f"  {aligned([batch_cells(batch)])[0]}")
-    if batch.warning:
-        print(batch.warning)
+    print(batch_saved_text(compound, batch, changes))
+    print_batch(batch)
     return 0
 
 
@@ -760,13 +757,9 @@ def compound_remove_batch(args: argparse.Namespace) -> int:
     try:
         workspace = current_workspace()
         compound, batch = get_batch(workspace, args.id, args.batch)
-        question = (
-            f"Remove batch {batch.number} of {compound.id} ({batch.details})? "
-            "It is hidden from the card but kept in the history, and the other "
-            "batches keep their numbers. [y/N] "
-        )
-        if not ask_yes(question):
-            print(f"Kept batch {batch.number} of {compound.id} as it was.")
+        question = remove_batch_question(compound, batch)
+        if not ask_yes(question.prompt):
+            print(question.kept)
             return 0
         remove_batch(workspace, args.id, args.batch)
     except (WorkspaceError, CompoundError) as error:
@@ -774,12 +767,9 @@ def compound_remove_batch(args: argparse.Namespace) -> int:
         return 1
     except KeyboardInterrupt:
         print()
-        print("Nothing was changed.", file=sys.stderr)
+        print(NOTHING_CHANGED, file=sys.stderr)
         return 1
-    print(
-        f"Removed batch {batch.number} from {compound.id}: {compound.label}. "
-        f'It stays in "syn compound history {compound.id}".'
-    )
+    print(batch_removed_text(compound, batch))
     return 0
 
 

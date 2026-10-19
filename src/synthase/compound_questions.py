@@ -408,6 +408,19 @@ def archive_question(compound: Compound) -> Question:
     )
 
 
+def remove_batch_question(compound: Compound, batch: Batch) -> Question:
+    """The [y/N] question asked before removing ``batch`` of ``compound``."""
+    return Question(
+        "remove",
+        f"Remove batch {batch.number} of {compound.id} ({batch.details})? "
+        "It is hidden from the card but kept in the history, and the other "
+        "batches keep their numbers.",
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept batch {batch.number} of {compound.id} as it was.",
+    )
+
+
 def change_name(change: Change) -> str:
     """How a confirmation names the value ``change`` changes."""
     # A batch's value, logged as "batch 1 mass", is asked about as "batch 1's mass".

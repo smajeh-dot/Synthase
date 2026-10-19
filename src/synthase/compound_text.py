@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from synthase.compounds import (
+    DEFAULT_STATUS,
     DETAIL_GROUPS,
     FIELD_NAMES,
     Batch,
@@ -75,9 +76,40 @@ def more_details_text(compound: Compound) -> str:
 
 
 def saved_changes_text(compound: Compound, changes: list[Change]) -> str:
-    count = len(changes)
-    plural = "" if count == 1 else "s"
-    return f"Saved {count} change{plural} to {compound.id}: {compound.label}"
+    return f"Saved {count_changes(changes)} to {compound.id}: {compound.label}"
+
+
+def count_changes(changes: list[Change]) -> str:
+    """``changes`` counted, as "1 change" or "2 changes"."""
+    return f"{len(changes)} change{'' if len(changes) == 1 else 's'}"
+
+
+def batch_added_text(compound: Compound, batch: Batch) -> str:
+    return f"Added batch {batch.number} to {compound.id}: {compound.label}"
+
+
+def still_planned_text(compound: Compound) -> str:
+    """The hint shown after adding a batch, or "" if the status has moved on."""
+    if compound.status != DEFAULT_STATUS:
+        return ""
+    return (
+        f'{compound.id} is still "{DEFAULT_STATUS}". Change it with '
+        f'"syn compound edit {compound.id} --status synthesised".'
+    )
+
+
+def batch_saved_text(compound: Compound, batch: Batch, changes: list[Change]) -> str:
+    return (
+        f"Saved {count_changes(changes)} to batch {batch.number} of "
+        f"{compound.id}: {compound.label}"
+    )
+
+
+def batch_removed_text(compound: Compound, batch: Batch) -> str:
+    return (
+        f"Removed batch {batch.number} from {compound.id}: {compound.label}. "
+        f'It stays in "syn compound history {compound.id}".'
+    )
 
 
 def archived_text(compound: Compound) -> str:

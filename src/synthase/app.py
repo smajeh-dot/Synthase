@@ -8,6 +8,7 @@ import argparse
 import sys
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -37,11 +38,14 @@ from synthase.compound_questions import (
     Question,
     add_flow,
     archive_question,
+    batch_flow,
     compound_answers,
     confirm_flow,
     confirmed,
+    edit_batch_flow,
     edit_flow,
     is_yes,
+    remove_batch_question,
     text_only,
 )
 from synthase.compound_text import (
@@ -52,7 +56,12 @@ from synthase.compound_text import (
     Card,
     Section,
     added_text,
+    aligned,
     archived_text,
+    batch_added_text,
+    batch_cells,
+    batch_removed_text,
+    batch_saved_text,
     card,
     card_lines,
     field_sections,
@@ -63,20 +72,28 @@ from synthase.compound_text import (
     saved_changes_text,
     screen_dates,
     section_lines,
+    still_planned_text,
 )
 from synthase.compounds import (
     TABLE_HEADINGS,
+    Batch,
     Change,
     Compound,
     CompoundError,
+    add_batch,
     add_compound,
     archive_compound,
     check_archive,
     compound_history,
+    edit_batch,
     edit_compound,
+    get_batch,
     get_compound,
     list_compounds,
+    parse_batch,
+    planned_batch_changes,
     planned_changes,
+    remove_batch,
     table_row,
 )
 from synthase.config import ConfigError, load_config
@@ -112,7 +129,18 @@ DOCTOR = "doctor"
 INIT = "init"
 COMPOUND = "compound"
 # The /compound commands the app runs so far.
-COMPOUND_IN_APP = ("add", "edit", "show", "list", "history", "archive", "restore")
+COMPOUND_IN_APP = (
+    "add",
+    "edit",
+    "show",
+    "list",
+    "history",
+    "archive",
+    "restore",
+    "batch",
+    "edit-batch",
+    "remove-batch",
+)
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -309,21 +337,42 @@ def section_widgets(sections: Iterable[Section]) -> Iterator[Widget]:
     for section in sections:
         if section.heading is not None:
             yield Static(section.heading, classes="heading", markup=False)
-        rows = [
-            tuple(screen_dates(cell or "-") for cell in row) for row in section.rows
-        ]
-        if rows:
+        if section.rows:
             # Batches and Spectra each have their own number of columns.
             kind = section.heading.lower() if section.table else "fields"
-            with Grid(classes=f"rows -{kind}"):
-                for row in rows:
-                    *first, last = row
-                    for cell in first:
-                        yield Label(cell, classes="name", markup=False)
-                    # The last column wraps, so a long value stays in it.
-                    yield Static(last, classes="value", markup=False)
+            yield row_grid(kind, section.rows)
         for line in section.warnings:
             yield Flag(*flagged(screen_dates(line)))
+
+
+def screen_rows(rows: Iterable[tuple[str | None, ...]]) -> list[tuple[str, ...]]:
+    """``rows`` with - in each blank cell and dates DD/MM/YYYY."""
+    return [tuple(screen_dates(cell or "-") for cell in row) for row in rows]
+
+
+def row_grid(kind: str, rows: Iterable[tuple[str | None, ...]]) -> Grid:
+    """``rows`` in the card's columns for ``kind``: fields, batches or spectra."""
+    cells = []
+    for row in screen_rows(rows):
+        *first, last = row
+        cells += [Label(cell, classes="name", markup=False) for cell in first]
+        # The last column wraps, so a long value stays in it.
+        cells.append(Static(last, classes="value", markup=False))
+    return Grid(*cells, classes=f"rows -{kind}")
+
+
+class CardRows(Message):
+    """Batches or spectra in the card's columns, e.g. after adding a batch."""
+
+    def __init__(self, kind: str, rows: list[tuple[str | None, ...]]) -> None:
+        super().__init__("normal", "\n".join(aligned(screen_rows(rows))))
+        self.add_class("-card")
+        self.columns = kind
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield row_grid(self.columns, self.rows)
 
 
 class CompoundTable(Message):
@@ -606,6 +655,12 @@ class SynthaseApp(App):
         elif args.compound_command == "restore":
             compound = archive_compound(workspace, args.id, archived=False)
             self.say("success", in_app(restored_text(compound)))
+        elif args.compound_command == "batch":
+            self.run_batch(args, workspace)
+        elif args.compound_command == "edit-batch":
+            self.run_edit_batch(args, workspace)
+        elif args.compound_command == "remove-batch":
+            self.run_remove_batch(args, workspace)
         else:
             self.list_compounds(args, workspace)
 
@@ -698,6 +753,99 @@ class SynthaseApp(App):
             self.say("success", in_app(archived_text(compound)))
 
         self.confirm("/compound archive", archive_question(compound), archive)
+
+    def run_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Add a batch as syn compound batch does: from options, or by asking."""
+        compound = get_compound(workspace, args.id)
+        flags = (args.date, args.mass, args.yield_percent)
+        if any(flag is not None for flag in flags):
+            self.finish_batch(workspace, args.id, *parse_batch(*flags))
+            return
+
+        def done(answers: Answers) -> None:
+            self.finish_batch(
+                workspace,
+                args.id,
+                answers["made_on"],
+                answers["mass_g"],
+                answers["yield_percent"],
+            )
+
+        self.ask("/compound batch", batch_flow(compound), done, NOTHING_ADDED)
+
+    def finish_batch(
+        self,
+        workspace: Path,
+        text: str,
+        made_on: date,
+        mass_g: float | None,
+        yield_percent: float | None,
+    ) -> None:
+        compound, batch = add_batch(workspace, text, made_on, mass_g, yield_percent)
+        self.say("success", batch_added_text(compound, batch))
+        self.show_batch(batch)
+        if planned := still_planned_text(compound):
+            self.say("hint", in_app(planned))
+
+    def show_batch(self, batch: Batch) -> None:
+        """``batch`` in the card's Batches columns, then any warning about it."""
+        self.show(CardRows("batches", [batch_cells(batch)]))
+        if batch.warning:
+            self.say("caution", batch.warning)
+
+    def run_edit_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Correct a batch as syn compound edit-batch does: from options, or by asking.
+
+        Every confirmation is asked before edit_batch saves anything.
+        """
+        compound, batch = get_batch(workspace, args.id, args.batch)
+        flags = {
+            "made_on": args.date,
+            "mass": args.mass,
+            "yield_percent": args.yield_percent,
+        }
+        if any(flag is not None for flag in flags.values()):
+            self.confirm_batch(workspace, args, flags)
+            return
+
+        def done(answers: Answers) -> None:
+            self.confirm_batch(workspace, args, answers)
+
+        flow = edit_batch_flow(compound, batch)
+        self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+
+    def confirm_batch(
+        self, workspace: Path, args: argparse.Namespace, values: Answers
+    ) -> None:
+        changes = planned_batch_changes(workspace, args.id, args.batch, **values)
+
+        def done(answers: Answers) -> None:
+            allowed = confirmed(changes, answers)
+            compound, batch, saved = edit_batch(
+                workspace, args.id, args.batch, allowed.__contains__, **values
+            )
+            if not saved:
+                self.say("normal", NOTHING_CHANGED)
+                return
+            self.say("success", batch_saved_text(compound, batch, saved))
+            self.show_batch(batch)
+
+        flow = confirm_flow(changes)
+        if flow.questions:
+            self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+        else:
+            done({})
+
+    def run_remove_batch(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Remove a batch after a yes, as syn compound remove-batch does."""
+        compound, batch = get_batch(workspace, args.id, args.batch)
+
+        def remove() -> None:
+            remove_batch(workspace, args.id, args.batch)
+            self.say("success", in_app(batch_removed_text(compound, batch)))
+
+        question = remove_batch_question(compound, batch)
+        self.confirm("/compound remove-batch", question, remove)
 
     def confirm(
         self, command: str, question: Question, then: Callable[[], None]

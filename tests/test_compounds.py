@@ -31,6 +31,7 @@ from synthase.compounds import (
     link_spectrum,
     list_compounds,
     missing_fields,
+    parse_batch,
     parse_batch_date,
     parse_class,
     parse_id,
@@ -43,6 +44,7 @@ from synthase.compounds import (
     parse_stock,
     parse_yes_no,
     parse_yield,
+    planned_batch_changes,
     planned_changes,
     purity_warnings,
     read_smiles,
@@ -421,6 +423,45 @@ def test_planned_changes_refuse_what_the_edit_refuses(tmp_path):
         planned_changes(tmp_path, "1", rf="0.4")
     with pytest.raises(CompoundError, match="SYN-002"):
         planned_changes(tmp_path, "2", notes="invented")
+
+
+def test_planned_batch_changes_match_the_edit_and_save_nothing(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    add_batch(tmp_path, "1", date(2026, 10, 18), 0.152)
+    given = {"made_on": "18/10/2026", "mass": "125 mg", "yield_percent": "64.2"}
+    planned = planned_batch_changes(tmp_path, "SYN-001", "1", **given)
+    assert planned == [
+        Change("batch 1 mass", "152 mg", "125 mg"),
+        Change("batch 1 yield", None, "64.2%"),
+    ]
+    # Adding logged the label, the status and the batch; planning logs nothing.
+    assert len(rows(tmp_path, "SELECT * FROM changes")) == 3
+    confirm = say(True)
+    *_, changes = edit_batch(tmp_path, "1", "1", confirm, **given)
+    assert changes == planned
+    assert confirm.asked == planned[:1]
+
+
+def test_planned_batch_changes_refuse_what_the_edit_refuses(tmp_path):
+    add_compound(tmp_path, "Test compound A")
+    add_batch(tmp_path, "1", date(2026, 10, 18), 0.152)
+    with pytest.raises(CompoundError, match="its mass made, its yield or both"):
+        planned_batch_changes(tmp_path, "1", "1", mass="-")
+    with pytest.raises(CompoundError, match="has no batch 2"):
+        planned_batch_changes(tmp_path, "1", "2", mass="1 g")
+    with pytest.raises(CompoundError, match="can't be cleared"):
+        planned_batch_changes(tmp_path, "1", "1", made_on="-")
+
+
+def test_parse_batch_reads_typed_options():
+    assert parse_batch("18/10/2026", "152 mg", "64.2%") == (
+        date(2026, 10, 18),
+        pytest.approx(0.152),
+        64.2,
+    )
+    assert parse_batch(None, None, "50") == (date.today(), None, 50.0)
+    with pytest.raises(CompoundError, match="isn't a mass"):
+        parse_batch(None, "lots", None)
 
 
 def test_only_confirmed_changes_are_made(tmp_path):
