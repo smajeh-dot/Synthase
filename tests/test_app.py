@@ -2,13 +2,25 @@
 
 import asyncio
 import os
+from datetime import date
 
 from synthase import __version__
 from synthase import app as app_module
-from synthase.app import NOT_YET, PLACEHOLDER, UNKNOWN, Message, SynthaseApp
+from synthase.app import (
+    NOT_YET,
+    PLACEHOLDER,
+    UNKNOWN,
+    CardMessage,
+    ChangeLog,
+    CompoundTable,
+    Flag,
+    Message,
+    SynthaseApp,
+)
 from synthase.cli import main
-from synthase.commands import ROOT_HINT
+from synthase.commands import ROOT_HINT, SUBCOMMANDS_HINT
 from synthase.compound_questions import add_flow
+from synthase.compounds import add_batch, add_compound, archive_compound
 from synthase.config import read_template
 from synthase.history import FILE_NAME
 from synthase.workspace import FOLDERS, POINTER_NAME, remember, settings_folder
@@ -189,10 +201,11 @@ def test_tab_lists_several_matches_once():
 
 def test_a_syn_command_not_in_the_app_yet_says_where_to_run_it():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/Compound show 1")
-        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound"))
-        assert NOT_YET.format(name="compound") == (
-            "/compound isn't in the app yet. For now, run syn compound in PowerShell."
+        await type_line(app, pilot, "/Compound Add")
+        assert messages(app)[-1] == ("error", NOT_YET.format(name="compound add"))
+        assert NOT_YET.format(name="compound add") == (
+            "/compound add isn't in the app yet. For now, run syn compound add in "
+            "PowerShell."
         )
 
     run(steps)
@@ -621,5 +634,217 @@ def test_esc_and_ctrl_c_do_nothing_without_a_question():
         assert messages(app) == []
         assert app.query_one("#command").value == "/he"
         assert app.is_running
+
+    run(steps)
+
+
+def invented_register(tmp_path):
+    """Three invented compounds: A melts over too wide a range and has a batch,
+    B is archived, C is a Schiff base."""
+    folder = doctor_workspace(tmp_path, unverified=13)
+    add_compound(
+        folder, "Test compound A", "chalcone", smiles="CCO", melting_point="455-461"
+    )
+    add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
+    add_compound(folder, "Test compound B", "chalcone")
+    add_compound(folder, "Test compound C", "Schiff base", status="synthesised")
+    archive_compound(folder, "2")
+    return folder
+
+
+def test_compound_show_shows_the_card_for_any_form_of_id(tmp_path):
+    invented_register(tmp_path)
+
+    async def steps(app, pilot):
+        for typed in ("SYN-001", "syn-1", "1"):
+            await type_line(app, pilot, f"/compound show {typed}")
+        cards = app.query(CardMessage)
+        assert len(cards) == 3
+        assert len({card.text for card in cards}) == 1
+        assert shown(app, ".msg.-card .title")[0] == "SYN-001: Test compound A"
+        assert shown(app, ".msg.-card .heading")[:2] == ["Characterisation", "Batches"]
+        assert shown(app, ".msg.-card .rows.-batches .value")[0] == "64.2%"
+        assert "18/10/2026" in shown(app, ".msg.-card .rows.-batches .name")
+        flags = [(flag.kind, flag.text) for flag in app.query(Flag)][:4]
+        assert flags[0] == (
+            "caution",
+            "The melting range is 6 K wide, wider than the melting-point purity "
+            "rule (2 K), so the sample may not be pure.",
+        )
+        assert flags[1][0] == "warning"
+        assert flags[1][1].startswith("Warning: melting-point purity rule")
+        assert flags[2] == ("hint", "Still missing:")
+        missing = shown(app, ".msg.-card .missing")
+        assert missing[0] == "no notes yet"
+        assert "no Rf value yet" in missing
+
+    run(steps, size=(120, 30))
+
+
+def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):
+    invented_register(tmp_path)
+    for filters in ([], ["--class", "chalcone", "--all"], ["--status", "purified"]):
+        main(["compound", "list", *filters])
+    printed = capsys.readouterr().out.splitlines()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound list")
+        table, summary = messages(app)[-2:]
+        assert table[1].splitlines()[1:] == [
+            "SYN-001  Test compound A  chalcone  planned  C2H6O  46.1",
+            "SYN-003  Test compound C  Schiff base  synthesised  -  -",
+        ]
+        assert summary == ("normal", printed[3])
+        assert summary[1] == "2 compounds (1 archived, hidden; add --all to see it)."
+
+        await type_line(app, pilot, "/compound list --class Chalcone --all")
+        table, summary = messages(app)[-2:]
+        assert [row.split()[0] for row in table[1].splitlines()[1:]] == [
+            "SYN-001",
+            "SYN-002",
+        ]
+        assert summary == ("normal", printed[7])
+        assert summary[1] == "2 of 3 compounds (class: chalcone)."
+        archived = app.query(CompoundTable).last().query(".cell.-archived")
+        assert [str(cell.render()) for cell in archived][:2] == [
+            "SYN-002",
+            "Test compound B (archived)",
+        ]
+
+        await type_line(app, pilot, "/compound list --status purified")
+        assert messages(app)[-1] == ("normal", printed[8])
+        assert printed[8] == "No compounds match (status: purified)."
+
+    run(steps, size=(80, 24))
+
+
+def test_compound_history_shows_the_change_log_oldest_first(tmp_path):
+    invented_register(tmp_path)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound history syn-2")
+        log = app.query(ChangeLog).last()
+        assert log.title == "History of SYN-002: Test compound B"
+        names = [name for _, name, _ in log.rows]
+        assert names == ["label", "class", "status", "archived"]
+        assert log.rows[0][2] == "(blank) → Test compound B"
+        assert log.rows[3][2] == "no → yes"
+        today = date.today().strftime("%d/%m/%Y")
+        assert all(when.startswith(today) for when, _, _ in log.rows)
+
+    run(steps)
+
+
+def test_compound_list_csv_asks_before_replacing(tmp_path):
+    folder = invented_register(tmp_path)
+    path = folder / "results" / "compounds.csv"
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        assert messages(app)[-1] == ("success", f"Saved the table to {path}")
+        path.write_text("an older table", encoding="utf-8")
+
+        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        assert bar_question(app) == f"{path} already exists. Replace it? [y/N]"
+        await pilot.press("escape")
+        assert messages(app)[-1] == ("cancel", "Cancelled. The table was not saved.")
+
+        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "n")
+        assert messages(app)[-1] == (
+            "normal",
+            f"Kept the existing {path}. The table was not saved.",
+        )
+        assert path.read_text(encoding="utf-8") == "an older table"
+
+        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "yes")
+        assert messages(app)[-1] == ("success", f"Saved the table to {path}")
+
+    run(steps)
+    lines = path.read_text(encoding="utf-8-sig").splitlines()
+    assert lines[0] == "ID,Label,Class,Status,Formula,Molar mass (g/mol)"
+    assert lines[1:] == [
+        "SYN-001,Test compound A,chalcone,planned,C2H6O,46.1",
+        "SYN-003,Test compound C,Schiff base,synthesised,,",
+    ]
+
+
+def test_compound_list_csv_path_in_quotes_keeps_backslashes(tmp_path):
+    folder = invented_register(tmp_path)
+    (folder / "results" / "June tables").mkdir()
+    path = folder / "results" / "June tables" / "list.csv"
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, f'/compound list --csv "{path}"')
+        assert messages(app)[-1] == ("success", f"Saved the table to {path}")
+
+    run(steps)
+    assert path.is_file()
+
+
+def test_compound_errors_match_syn(tmp_path, capsys):
+    invented_register(tmp_path)
+    for argv in (["show", "9"], ["show", "nine"], ["list", "--status", "nonsense"]):
+        main(["compound", *argv])
+    errors = capsys.readouterr().err.splitlines()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound show 9")
+        assert messages(app)[-1] == (
+            "error",
+            errors[0].replace('"syn compound list"', '"/compound list"'),
+        )
+        assert messages(app)[-1][1] == (
+            'There\'s no compound SYN-009 in the register. Run "/compound list" '
+            "to see every ID."
+        )
+        await type_line(app, pilot, "/compound history nine")
+        assert messages(app)[-1] == ("error", errors[1])
+        await type_line(app, pilot, "/compound list --status nonsense")
+        assert messages(app)[-1] == ("error", errors[2])
+
+        await type_line(app, pilot, "/compound show")
+        assert messages(app)[-2:] == [
+            ("error", "the following arguments are required: ID"),
+            ("hint", "Type /help compound show to see how it's used."),
+        ]
+        await type_line(app, pilot, "/compound list --csv")
+        assert messages(app)[-2][1] == "argument --csv: expected one argument"
+        await type_line(app, pilot, '/compound list --csv "open')
+        assert messages(app)[-1] == ("error", "a quote isn't closed")
+
+        await type_line(app, pilot, "/compound")
+        assert messages(app)[-1] == (
+            "hint",
+            SUBCOMMANDS_HINT.format(name="compound", first="compound add"),
+        )
+        await type_line(app, pilot, "/compound frob")
+        assert messages(app)[-1] == ("error", UNKNOWN)
+        assert app.is_running
+
+    run(steps)
+
+
+def test_an_empty_register_says_how_to_add_one(tmp_path):
+    doctor_workspace(tmp_path, unverified=13)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound list")
+        assert messages(app)[-1] == (
+            "normal",
+            'The register is empty. Add a compound with "syn compound add".',
+        )
+
+    run(steps)
+
+
+def test_compound_without_a_workspace_points_to_init():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound list")
+        assert messages(app)[-1] == (
+            "error",
+            'There is no workspace yet. Run "/init" to create one.',
+        )
 
     run(steps)

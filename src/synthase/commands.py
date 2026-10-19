@@ -9,6 +9,8 @@ for #53" and "Details settled for #54".
 
 import argparse
 import os
+import shlex
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from synthase.cli import build_parser
@@ -35,6 +37,12 @@ SUBCOMMANDS_HINT = (
     "For a command's options, type /help {name} <command>, e.g. /help {first}."
 )
 NO_HELP = 'There\'s no help on "{asked}".'
+USAGE_HINT = "Type /help {topic} to see how it's used."
+UNCLOSED_QUOTE = "a quote isn't closed"
+
+
+class UsageError(Exception):
+    """A command typed wrongly, with the reason the plain command line gives."""
 
 
 @dataclass
@@ -182,3 +190,42 @@ def complete(text: str, root: Command) -> Completion:
     if len(shared) > len(word):
         return Completion(start + shared)
     return Completion(text, tuple(matches))
+
+
+def split_words(text: str) -> list[str]:
+    """``text`` split into words as PowerShell splits them.
+
+    Quotes group words and are removed; backslashes stay as typed, so a Windows
+    path such as "D:\\Lab tables\\june.csv" works.
+    """
+    lexer = shlex.shlex(text, posix=True)
+    lexer.whitespace_split = True
+    lexer.escape = ""
+    try:
+        return list(lexer)
+    except ValueError:
+        raise UsageError(UNCLOSED_QUOTE) from None
+
+
+def _parsers(parser: argparse.ArgumentParser) -> Iterator[argparse.ArgumentParser]:
+    yield parser
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for sub_parser in action.choices.values():
+                yield from _parsers(sub_parser)
+
+
+def _refuse(message: str) -> None:
+    raise UsageError(message)
+
+
+def parse_command(words: list[str]) -> argparse.Namespace:
+    """``words``, such as ["compound", "list", "--all"], read as syn reads them.
+
+    A mistake raises UsageError with argparse's reason, instead of argparse
+    printing it and closing the app.
+    """
+    parser = build_parser()
+    for each in _parsers(parser):
+        each.error = _refuse
+    return parser.parse_args(words)
