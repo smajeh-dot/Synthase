@@ -842,12 +842,7 @@ def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compo
     Nothing is deleted, and the change is logged.
     """
     compound = get_compound(workspace, text)
-    if compound.archived == archived:
-        raise CompoundError(
-            f"{compound.id} is already archived."
-            if archived
-            else f"{compound.id} isn't archived, so there's nothing to restore."
-        )
+    check_archive(compound, archived)
     with _open(workspace) as db:
         db.execute(
             "UPDATE compounds SET archived = ? WHERE id = ?",
@@ -859,6 +854,16 @@ def archive_compound(workspace: Path, text: str, archived: bool = True) -> Compo
             [Change("archived", _yes_no(not archived), _yes_no(archived))],
         )
     return replace(compound, archived=archived)
+
+
+def check_archive(compound: Compound, archived: bool = True) -> None:
+    """Refuse to archive ``compound`` twice, or to restore one that isn't archived."""
+    if compound.archived == archived:
+        raise CompoundError(
+            f"{compound.id} is already archived."
+            if archived
+            else f"{compound.id} isn't archived, so there's nothing to restore."
+        )
 
 
 def _yes_no(value: bool) -> str:

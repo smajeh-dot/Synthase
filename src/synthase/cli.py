@@ -12,6 +12,7 @@ from synthase.compound_questions import (
     Answers,
     Flow,
     add_flow,
+    archive_question,
     batch_flow,
     change_question,
     compound_answers,
@@ -29,6 +30,7 @@ from synthase.compound_text import (
     NOTHING_CHANGED,
     added_text,
     aligned,
+    archived_text,
     batch_cells,
     card,
     card_lines,
@@ -36,6 +38,7 @@ from synthase.compound_text import (
     history_lines,
     list_summary,
     more_details_text,
+    restored_text,
     saved_changes_text,
     section_lines,
     spectrum_cells,
@@ -53,6 +56,7 @@ from synthase.compounds import (
     add_batch,
     add_compound,
     archive_compound,
+    check_archive,
     compound_history,
     edit_batch,
     edit_compound,
@@ -598,14 +602,10 @@ def compound_archive(text: str) -> int:
     try:
         workspace = current_workspace()
         compound = get_compound(workspace, text)
-        if compound.archived:
-            raise CompoundError(f"{compound.id} is already archived.")
-        question = (
-            f"Archive {compound.id} ({compound.label})? It stays in the register "
-            'but is hidden from "syn compound list". [y/N] '
-        )
-        if not ask_yes(question):
-            print(f"Kept {compound.id} as it was.")
+        check_archive(compound)
+        question = archive_question(compound)
+        if not ask_yes(question.prompt):
+            print(question.kept)
             return 0
         archive_compound(workspace, text)
     except (WorkspaceError, CompoundError) as error:
@@ -613,12 +613,9 @@ def compound_archive(text: str) -> int:
         return 1
     except KeyboardInterrupt:
         print()
-        print("Nothing was changed.", file=sys.stderr)
+        print(NOTHING_CHANGED, file=sys.stderr)
         return 1
-    print(
-        f"Archived {compound.id}: {compound.label}. "
-        f'Undo with "syn compound restore {compound.id}".'
-    )
+    print(archived_text(compound))
     return 0
 
 
@@ -628,10 +625,7 @@ def compound_restore(text: str) -> int:
     except (WorkspaceError, CompoundError) as error:
         print(error, file=sys.stderr)
         return 1
-    print(
-        f"Restored {compound.id}: {compound.label}. "
-        'It shows in "syn compound list" again.'
-    )
+    print(restored_text(compound))
     return 0
 
 

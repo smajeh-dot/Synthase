@@ -396,6 +396,18 @@ def unlink_flow(workspace: Path, compound: Compound) -> Flow:
     )
 
 
+def archive_question(compound: Compound) -> Question:
+    """The [y/N] question asked before archiving ``compound``."""
+    return Question(
+        "archive",
+        f"Archive {compound.id} ({compound.label})? It stays in the register "
+        'but is hidden from "syn compound list".',
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept {compound.id} as it was.",
+    )
+
+
 def change_name(change: Change) -> str:
     """How a confirmation names the value ``change`` changes."""
     # A batch's value, logged as "batch 1 mass", is asked about as "batch 1's mass".

@@ -36,6 +36,7 @@ from synthase.compound_questions import (
     Flow,
     Question,
     add_flow,
+    archive_question,
     compound_answers,
     confirm_flow,
     confirmed,
@@ -51,12 +52,14 @@ from synthase.compound_text import (
     Card,
     Section,
     added_text,
+    archived_text,
     card,
     card_lines,
     field_sections,
     history_rows,
     list_summary,
     more_details_text,
+    restored_text,
     saved_changes_text,
     screen_dates,
     section_lines,
@@ -67,6 +70,8 @@ from synthase.compounds import (
     Compound,
     CompoundError,
     add_compound,
+    archive_compound,
+    check_archive,
     compound_history,
     edit_compound,
     get_compound,
@@ -107,7 +112,7 @@ DOCTOR = "doctor"
 INIT = "init"
 COMPOUND = "compound"
 # The /compound commands the app runs so far.
-COMPOUND_IN_APP = ("add", "edit", "show", "list", "history")
+COMPOUND_IN_APP = ("add", "edit", "show", "list", "history", "archive", "restore")
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -596,6 +601,11 @@ class SynthaseApp(App):
             self.show(CardMessage(card(get_compound(workspace, args.id), workspace)))
         elif args.compound_command == "history":
             self.show(ChangeLog(*compound_history(workspace, args.id)))
+        elif args.compound_command == "archive":
+            self.run_archive(args.id, workspace)
+        elif args.compound_command == "restore":
+            compound = archive_compound(workspace, args.id, archived=False)
+            self.say("success", in_app(restored_text(compound)))
         else:
             self.list_compounds(args, workspace)
 
@@ -678,6 +688,31 @@ class SynthaseApp(App):
         self.say("success", saved_changes_text(compound, changes))
         self.show(Fields(field_sections(compound, workspace)))
 
+    def run_archive(self, text: str, workspace: Path) -> None:
+        """Archive a compound after a yes, as syn compound archive does."""
+        compound = get_compound(workspace, text)
+        check_archive(compound)
+
+        def archive() -> None:
+            archive_compound(workspace, text)
+            self.say("success", in_app(archived_text(compound)))
+
+        self.confirm("/compound archive", archive_question(compound), archive)
+
+    def confirm(
+        self, command: str, question: Question, then: Callable[[], None]
+    ) -> None:
+        """Ask the [y/N] ``question``, then call ``then`` after a yes.
+
+        Anything else shows the question's kept line, and Esc changes nothing.
+        """
+
+        def done(answers: Answers) -> None:
+            if answers[question.key]:
+                then()
+
+        self.ask(command, Flow((), (question,)), done, NOTHING_CHANGED)
+
     def list_compounds(self, args: argparse.Namespace, workspace: Path) -> None:
         shown = list_compounds(
             workspace, args.status, args.compound_class, archived=args.all
@@ -741,7 +776,7 @@ class SynthaseApp(App):
         Esc or Ctrl+C cancels and says ``nothing``, and ``done`` isn't called.
         """
         for line in flow.opening:
-            self.say("normal", line)
+            self.say("normal", asked_text(line))
         self.asking = Asking(command, flow, done, nothing)
         bar = self.query_one("#bar")
         bar.add_class("-answering")
@@ -754,14 +789,18 @@ class SynthaseApp(App):
         asking.question = asking.flow.next_question(asking.answers)
         if asking.question is None:
             self.stop_asking()
-            asking.done(asking.answers)
+            try:
+                asking.done(asking.answers)
+            except (WorkspaceError, CompoundError) as error:
+                self.say("error", in_app(str(error)))
         else:
-            self.query_one("#question", Static).update(asking.question.prompt.rstrip())
+            prompt = asked_text(asking.question.prompt.rstrip())
+            self.query_one("#question", Static).update(prompt)
 
     def answer(self, text: str) -> None:
         """Check the answer typed; a wrong one is explained and asked again."""
         asking = self.asking
-        self.show(Answered(asking.question.prompt, text))
+        self.show(Answered(asked_text(asking.question.prompt), text))
         try:
             answer = asking.question.answer(text, asking.answers)
         except CompoundError as error:
@@ -769,7 +808,7 @@ class SynthaseApp(App):
             return
         asking.answers[asking.question.key] = answer
         if asking.question.kept is not None and not answer:
-            self.say("normal", asking.question.kept)
+            self.say("normal", asked_text(asking.question.kept))
         self.next_question()
 
     def stop_asking(self) -> None:
@@ -832,9 +871,7 @@ class SynthaseApp(App):
 
 # Shared messages name syn commands; in the app they name its own.
 IN_APP = (
-    ('"syn compound add"', '"/compound add"'),
-    ('"syn compound edit ', '"/compound edit '),
-    ('"syn compound list"', '"/compound list"'),
+    ('"syn compound ', '"/compound '),
     ('"syn init"', '"/init"'),
 )
 
@@ -844,6 +881,14 @@ def in_app(message: str) -> str:
     for syn, app in IN_APP:
         message = message.replace(syn, app)
     return message
+
+
+def asked_text(text: str) -> str:
+    """A question, its opening lines or a kept line as the app shows it.
+
+    It names the app's own commands, and its dates are DD/MM/YYYY.
+    """
+    return screen_dates(in_app(text))
 
 
 def main(argv: list[str] | None = None) -> int:

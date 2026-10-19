@@ -80,6 +80,20 @@ def saved_changes_text(compound: Compound, changes: list[Change]) -> str:
     return f"Saved {count} change{plural} to {compound.id}: {compound.label}"
 
 
+def archived_text(compound: Compound) -> str:
+    return (
+        f"Archived {compound.id}: {compound.label}. "
+        f'Undo with "syn compound restore {compound.id}".'
+    )
+
+
+def restored_text(compound: Compound) -> str:
+    return (
+        f"Restored {compound.id}: {compound.label}. "
+        'It shows in "syn compound list" again.'
+    )
+
+
 def field_sections(compound: Compound, workspace: Path) -> list[Section]:
     """``compound``'s filled fields, then a section for each group of details.
 

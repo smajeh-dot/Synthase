@@ -1077,3 +1077,51 @@ def test_compound_edit_with_options_asks_only_confirmations(tmp_path):
     assert (compound.smiles, compound.notes) == ("CCO", None)
     assert str(compound.melting_point) == "455–457 K"
     assert len(compound_history(folder, "1")[1]) == 4
+
+
+def test_compound_archive_asks_first_and_restore_does_not(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=0)
+    add_compound(folder, "Test compound A")
+    question = (
+        "Archive SYN-001 (Test compound A)? It stays in the register but is "
+        'hidden from "/compound list". [y/N]'
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/compound archive 1")
+        assert app.query_one("#bar").border_title == (
+            " Answering /compound archive · Esc cancels "
+        )
+        await answer_each(app, pilot, [(question, "")])
+        assert messages(app)[-1] == ("normal", "Kept SYN-001 as it was.")
+        await type_line(app, pilot, "/compound archive 1")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        assert not get_compound(folder, "1").archived
+        await type_line(app, pilot, "/compound archive SYN-001")
+        await answer_each(app, pilot, [(question, "y")])
+        assert messages(app)[-1] == (
+            "success",
+            'Archived SYN-001: Test compound A. Undo with "/compound restore SYN-001".',
+        )
+        await type_line(app, pilot, "/compound archive 1")
+        assert messages(app)[-1] == ("error", "SYN-001 is already archived.")
+        await type_line(app, pilot, "/compound restore 1")
+        assert not answering(app)
+        assert messages(app)[-1] == (
+            "success",
+            'Restored SYN-001: Test compound A. It shows in "/compound list" again.',
+        )
+        await type_line(app, pilot, "/compound restore 1")
+        assert messages(app)[-1] == (
+            "error",
+            "SYN-001 isn't archived, so there's nothing to restore.",
+        )
+
+    run(steps)
+    _, changes = compound_history(folder, "1")
+    assert [(c.field, c.old, c.new) for c in changes[-2:]] == [
+        ("archived", "no", "yes"),
+        ("archived", "yes", "no"),
+    ]
