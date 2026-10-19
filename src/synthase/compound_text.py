@@ -4,6 +4,7 @@ The plain command line and the app both show these words. Nothing here
 prints or asks anything.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,9 @@ from synthase.compounds import (
 )
 from synthase.config import ConfigError, load_config
 from synthase.numbers import sig_figs
+
+EMPTY_REGISTER = 'The register is empty. Add a compound with "syn compound add".'
+ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
 @dataclass(frozen=True)
@@ -214,6 +218,11 @@ def aligned(rows: list[tuple[str | None, ...]]) -> list[str]:
         ).rstrip()
         for line in cells
     ]
+
+
+def screen_dates(text: str) -> str:
+    """``text`` with each YYYY-MM-DD date written DD/MM/YYYY, as the app shows dates."""
+    return ISO_DATE.sub(r"\3/\2/\1", text)
 
 
 def detail_text(compound: Compound, field: str) -> str | None:

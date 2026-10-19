@@ -22,6 +22,7 @@ from synthase.compound_questions import (
     unlink_flow,
 )
 from synthase.compound_text import (
+    EMPTY_REGISTER,
     aligned,
     batch_cells,
     card,
@@ -63,7 +64,15 @@ from synthase.compounds import (
 )
 from synthase.config import ConfigError, load_config
 from synthase.doctor import report_text, run_checks
-from synthase.tables import TableFolderError, place_table, write_csv
+from synthase.tables import (
+    TableFolderError,
+    kept_text,
+    not_saved_text,
+    place_table,
+    replace_question,
+    saved_text,
+    write_csv,
+)
 from synthase.workspace import (
     DEFAULT_NAME,
     WorkspaceError,
@@ -537,7 +546,7 @@ def compound_list(args: argparse.Namespace) -> int:
         print(error, file=sys.stderr)
         return 1
     if not everything:
-        print('The register is empty. Add a compound with "syn compound add".')
+        print(EMPTY_REGISTER)
         return 0
     summary = list_summary(
         shown, everything, args.status, args.compound_class, archived=args.all
@@ -657,19 +666,15 @@ def save_csv(name: Path, workspace: Path, rows: list[tuple[str | None, ...]]) ->
     except (ConfigError, TableFolderError) as error:
         print(error, file=sys.stderr)
         return 1
-    if path.exists() and not ask_yes(f"{path} already exists. Replace it? [y/N] "):
-        print(f"Kept the existing {path}. The table was not saved.")
+    if path.exists() and not ask_yes(f"{replace_question(path)} [y/N] "):
+        print(kept_text(path))
         return 0
     try:
         write_csv(path, TABLE_HEADINGS, rows)
     except OSError as error:
-        print(
-            f"Couldn't save {path}: {error.strerror}. "
-            "If it is open in Excel, close it and try again.",
-            file=sys.stderr,
-        )
+        print(not_saved_text(path, error), file=sys.stderr)
         return 1
-    print(f"Saved the table to {path.resolve()}")
+    print(saved_text(path))
     return 0
 
 

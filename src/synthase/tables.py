@@ -63,6 +63,26 @@ def place_table(name: Path, workspace: Path, config: Config, area: str) -> Path:
     return path
 
 
+def replace_question(path: Path) -> str:
+    """The question asked before an existing table is replaced."""
+    return f"{path} already exists. Replace it?"
+
+
+def kept_text(path: Path) -> str:
+    return f"Kept the existing {path}. The table was not saved."
+
+
+def saved_text(path: Path) -> str:
+    return f"Saved the table to {path.resolve()}"
+
+
+def not_saved_text(path: Path, error: OSError) -> str:
+    return (
+        f"Couldn't save {path}: {error.strerror}. "
+        "If it is open in Excel, close it and try again."
+    )
+
+
 def write_csv(
     path: Path, headings: Sequence[str], rows: Iterable[Sequence[str | None]]
 ) -> None:
