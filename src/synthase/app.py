@@ -7,7 +7,7 @@ All styling is in synthase.tcss and theme.py; nothing here names a colour.
 import argparse
 import sys
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 
@@ -46,13 +46,17 @@ from synthase.compound_questions import (
     edit_flow,
     is_yes,
     remove_batch_question,
+    spectrum_flow,
     text_only,
+    unlink_flow,
+    unlink_question,
 )
 from synthase.compound_text import (
     EMPTY_REGISTER,
     LABEL_NEEDED,
     NOTHING_ADDED,
     NOTHING_CHANGED,
+    NOTHING_LINKED,
     Card,
     Section,
     added_text,
@@ -65,14 +69,18 @@ from synthase.compound_text import (
     card,
     card_lines,
     field_sections,
+    file_needed_text,
     history_rows,
+    linked_text,
     list_summary,
     more_details_text,
     restored_text,
     saved_changes_text,
     screen_dates,
     section_lines,
+    spectrum_cells,
     still_planned_text,
+    unlinked_text,
 )
 from synthase.compounds import (
     TABLE_HEADINGS,
@@ -89,12 +97,15 @@ from synthase.compounds import (
     edit_compound,
     get_batch,
     get_compound,
+    get_spectrum,
+    link_spectrum,
     list_compounds,
     parse_batch,
     planned_batch_changes,
     planned_changes,
     remove_batch,
     table_row,
+    unlink_spectrum,
 )
 from synthase.config import ConfigError, load_config
 from synthase.doctor import Check, ReportText, report_text, run_checks
@@ -121,26 +132,11 @@ from synthase.workspace import (
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#59).
-NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
 INIT = "init"
 COMPOUND = "compound"
-# The /compound commands the app runs so far.
-COMPOUND_IN_APP = (
-    "add",
-    "edit",
-    "show",
-    "list",
-    "history",
-    "archive",
-    "restore",
-    "batch",
-    "edit-batch",
-    "remove-batch",
-)
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -548,14 +544,18 @@ class SynthaseApp(App):
             self.run_init(text.split(maxsplit=1)[1:])
         elif command.name == COMPOUND:
             self.run_compound(text)
-        else:
-            self.say("error", NOT_YET.format(name=command.name))
 
     def show_help(self, topic: list[str]) -> None:
         page = help_page(topic, self.commands)
         if page.error:
             self.say("error", page.error)
             return
+        # The help is syn's; in the app it names the app's own commands.
+        page = replace(
+            page,
+            paragraphs=tuple(in_app(paragraph) for paragraph in page.paragraphs),
+            rows=tuple((name, in_app(text)) for name, text in page.rows),
+        )
         self.show(HelpMessage(page))
         if page.hint:
             self.say("hint", page.hint)
@@ -624,8 +624,6 @@ class SynthaseApp(App):
         name = words[0] = words[0].lower()
         if name not in self.commands.subcommands[COMPOUND].subcommands:
             self.say("error", UNKNOWN)
-        elif name not in COMPOUND_IN_APP:
-            self.say("error", NOT_YET.format(name=f"{COMPOUND} {name}"))
         elif "-h" in words or "--help" in words:
             self.show_help([COMPOUND, name])
         else:
@@ -661,6 +659,10 @@ class SynthaseApp(App):
             self.run_edit_batch(args, workspace)
         elif args.compound_command == "remove-batch":
             self.run_remove_batch(args, workspace)
+        elif args.compound_command == "spectrum":
+            self.run_spectrum(args, workspace)
+        elif args.compound_command == "unlink":
+            self.run_unlink(args, workspace)
         else:
             self.list_compounds(args, workspace)
 
@@ -846,6 +848,54 @@ class SynthaseApp(App):
 
         question = remove_batch_question(compound, batch)
         self.confirm("/compound remove-batch", question, remove)
+
+    def run_spectrum(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Link a spectra file as syn compound spectrum does: given, or by asking."""
+        compound = get_compound(workspace, args.id)
+        if args.file is not None:
+            self.finish_link(workspace, args.id, args.file, args.kind)
+            return
+        if args.kind is not None:
+            raise CompoundError(file_needed_text(compound))
+
+        def done(answers: Answers) -> None:
+            self.finish_link(workspace, args.id, answers["file"], answers["kind"])
+
+        flow = spectrum_flow(workspace, compound)
+        self.ask("/compound spectrum", flow, done, NOTHING_LINKED)
+
+    def finish_link(
+        self, workspace: Path, text: str, file: Path, kind: str | None
+    ) -> None:
+        compound, spectrum = link_spectrum(workspace, text, file, kind)
+        self.say("success", linked_text(compound))
+        self.show(CardRows("spectra", [spectrum_cells(spectrum, workspace)]))
+
+    def run_unlink(self, args: argparse.Namespace, workspace: Path) -> None:
+        """Unlink a spectra file after a yes, as syn compound unlink does.
+
+        With no file, the linked files are listed and the app asks which one.
+        """
+        compound = get_compound(workspace, args.id)
+        if args.file is not None:
+            self.confirm_unlink(workspace, args.id, args.file)
+            return
+
+        def done(answers: Answers) -> None:
+            self.confirm_unlink(workspace, args.id, answers["file"])
+
+        flow = unlink_flow(workspace, compound)
+        self.ask("/compound unlink", flow, done, NOTHING_CHANGED)
+
+    def confirm_unlink(self, workspace: Path, text: str, file: str) -> None:
+        compound, spectrum = get_spectrum(workspace, text, file)
+
+        def unlink() -> None:
+            unlink_spectrum(workspace, text, file)
+            self.say("success", unlinked_text(compound, spectrum))
+
+        question = unlink_question(compound, spectrum)
+        self.confirm("/compound unlink", question, unlink)
 
     def confirm(
         self, command: str, question: Question, then: Callable[[], None]

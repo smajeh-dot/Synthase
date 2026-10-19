@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from synthase.compound_text import aligned, spectrum_cells
+from synthase.compound_text import aligned, spectrum_cells, spectrum_name
 from synthase.compounds import (
     CLASSES,
     CLEAR,
@@ -24,6 +24,7 @@ from synthase.compounds import (
     Change,
     Compound,
     CompoundError,
+    Spectrum,
     as_text,
     check_label,
     check_rf,
@@ -418,6 +419,18 @@ def remove_batch_question(compound: Compound, batch: Batch) -> Question:
         text_only(is_yes),
         yes_no=True,
         kept=f"Kept batch {batch.number} of {compound.id} as it was.",
+    )
+
+
+def unlink_question(compound: Compound, spectrum: Spectrum) -> Question:
+    """The [y/N] question asked before unlinking ``spectrum`` from ``compound``."""
+    name = spectrum_name(spectrum)
+    return Question(
+        "unlink",
+        f"Unlink {name} from {compound.id}? The file itself is not touched.",
+        text_only(is_yes),
+        yes_no=True,
+        kept=f"Kept the link to {name}.",
     )
 
 

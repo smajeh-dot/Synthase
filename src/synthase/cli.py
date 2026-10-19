@@ -23,12 +23,14 @@ from synthase.compound_questions import (
     remove_batch_question,
     spectrum_flow,
     unlink_flow,
+    unlink_question,
 )
 from synthase.compound_text import (
     EMPTY_REGISTER,
     LABEL_NEEDED,
     NOTHING_ADDED,
     NOTHING_CHANGED,
+    NOTHING_LINKED,
     added_text,
     aligned,
     archived_text,
@@ -39,15 +41,17 @@ from synthase.compound_text import (
     card,
     card_lines,
     field_sections,
+    file_needed_text,
     history_lines,
+    linked_text,
     list_summary,
     more_details_text,
     restored_text,
     saved_changes_text,
     section_lines,
     spectrum_cells,
-    spectrum_name,
     still_planned_text,
+    unlinked_text,
 )
 from synthase.compounds import (
     CLASSES,
@@ -785,11 +789,7 @@ def compound_spectrum(args: argparse.Namespace) -> int:
             answers = ask_questions(spectrum_flow(workspace, compound))
             file, kind = answers["file"], answers["kind"]
         elif args.file is None:
-            print(
-                f'Give the file to link, as in "syn compound spectrum {compound.id} '
-                'spectra\\IR.csv --kind IR".',
-                file=sys.stderr,
-            )
+            print(file_needed_text(compound), file=sys.stderr)
             return 1
         else:
             file, kind = args.file, args.kind
@@ -799,9 +799,9 @@ def compound_spectrum(args: argparse.Namespace) -> int:
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was linked.", file=sys.stderr)
+        print(NOTHING_LINKED, file=sys.stderr)
         return 1
-    print(f"Linked to {compound.id}: {compound.label}")
+    print(linked_text(compound))
     print(f"  {aligned([spectrum_cells(spectrum, workspace)])[0]}")
     return 0
 
@@ -814,12 +814,9 @@ def compound_unlink(args: argparse.Namespace) -> int:
         if file is None:
             file = ask_questions(unlink_flow(workspace, compound))["file"]
         compound, spectrum = get_spectrum(workspace, args.id, file)
-        name = spectrum_name(spectrum)
-        question = (
-            f"Unlink {name} from {compound.id}? The file itself is not touched. [y/N] "
-        )
-        if not ask_yes(question):
-            print(f"Kept the link to {name}.")
+        question = unlink_question(compound, spectrum)
+        if not ask_yes(question.prompt):
+            print(question.kept)
             return 0
         unlink_spectrum(workspace, args.id, file)
     except (WorkspaceError, CompoundError) as error:
@@ -827,7 +824,7 @@ def compound_unlink(args: argparse.Namespace) -> int:
         return 1
     except (EOFError, KeyboardInterrupt):
         print()
-        print("Nothing was changed.", file=sys.stderr)
+        print(NOTHING_CHANGED, file=sys.stderr)
         return 1
-    print(f"Unlinked {name} from {compound.id}: {compound.label}.")
+    print(unlinked_text(compound, spectrum))
     return 0

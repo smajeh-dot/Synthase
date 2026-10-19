@@ -34,6 +34,7 @@ LABEL_NEEDED = (
 )
 NOTHING_ADDED = "Nothing was added."
 NOTHING_CHANGED = "Nothing was changed."
+NOTHING_LINKED = "Nothing was linked."
 ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 
@@ -321,6 +322,22 @@ def spectrum_cells(spectrum: Spectrum, workspace: Path) -> tuple[str | None, ...
         str(Path(spectrum.path)),
         f"(added {spectrum.added[:10]}){found}",
     )
+
+
+def file_needed_text(compound: Compound) -> str:
+    """The error for a --kind given with no file to link."""
+    return (
+        f'Give the file to link, as in "syn compound spectrum {compound.id} '
+        'spectra\\IR.csv --kind IR".'
+    )
+
+
+def linked_text(compound: Compound) -> str:
+    return f"Linked to {compound.id}: {compound.label}"
+
+
+def unlinked_text(compound: Compound, spectrum: Spectrum) -> str:
+    return f"Unlinked {spectrum_name(spectrum)} from {compound.id}: {compound.label}."
 
 
 def spectrum_name(spectrum: Spectrum) -> str:
