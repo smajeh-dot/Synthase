@@ -1,4 +1,5 @@
 import csv
+import os
 import shutil
 import subprocess
 import sys
@@ -77,6 +78,33 @@ def test_init_creates_workspace_and_lists_what_goes_where(tmp_path, capsys):
         assert f"  {name}" in out
     assert "Next: open config.toml and check each value against the literature." in out
     assert (tmp_path / "ws" / "config.toml").is_file()
+
+
+def test_init_prints_each_line_exactly(tmp_path, capsys, monkeypatch):
+    folder = (tmp_path / "ws").resolve()
+    rows = (
+        f"  {'raw' + os.sep:<12} plate reader exports, exactly as saved\n"
+        f"  {'maps' + os.sep:<12} plate maps (which compound is in which well)\n"
+        f"  {'results' + os.sep:<12} tables and figures Synthase makes\n"
+        f"  {'notebook' + os.sep:<12} your notebook entries\n"
+    )
+    main(["init", str(folder)])
+    assert capsys.readouterr().out == (
+        f"Created the Synthase workspace at {folder}\n"
+        + rows
+        + "  config.toml  every scientific value Synthase uses, all unverified "
+        "for now\n"
+        "Next: open config.toml and check each value against the literature.\n"
+        "Synthase will use this workspace from now on.\n"
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: "")
+    main(["init", str(folder)])
+    assert capsys.readouterr().out == (
+        f"Using the existing Synthase workspace at {folder}\n"
+        + rows
+        + "  config.toml  kept as it was\n"
+        "Synthase will use this workspace from now on.\n"
+    )
 
 
 def test_init_without_a_path_uses_documents(tmp_path, capsys):

@@ -5,27 +5,43 @@ All styling is in synthase.tcss and theme.py; nothing here names a colour.
 """
 
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, HorizontalGroup, Vertical, VerticalScroll
+from textual.markup import escape
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
 from synthase.commands import HELP, HelpPage, command_list, complete, find, help_page
+from synthase.compound_questions import Answers, Flow, Question, is_yes, text_only
+from synthase.compounds import CompoundError
 from synthase.doctor import Check, ReportText, report_text, run_checks
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
 from synthase.theme import SYNTHASE
+from synthase.workspace import (
+    WorkspaceError,
+    create_workspace,
+    init_text,
+    workspace_target,
+)
 
 PLACEHOLDER = "Type a command, e.g. /help"
 WELCOME = "Type /quit or press Ctrl+Q to leave."
 UNKNOWN = "unknown command, try /help"
-# For a syn command whose app version hasn't been built yet (#56 to #59).
+# For a syn command whose app version hasn't been built yet (#57 to #59).
 NOT_YET = "/{name} isn't in the app yet. For now, run syn {name} in PowerShell."
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
+INIT = "init"
+# The top rule's title while a command is asking questions.
+ANSWERING = " Answering {command} · Esc cancels "
+CANCELLED = "Cancelled. {nothing}"
 # The output keeps only the latest messages, so a long session stays quick.
 MAX_MESSAGES = 1000
 # Shown in the top rule until the first command.
@@ -40,6 +56,7 @@ GLYPHS = {
     "warning": "?",
     "error": "✗",
     "cancel": "‹",
+    "answered": "",
 }
 
 
@@ -129,6 +146,50 @@ class UnverifiedValues(Message):
                         yield Static(source, classes="value", markup=False)
 
 
+class Answered(Message):
+    """A question and the answer typed, kept in the output as a record."""
+
+    def __init__(self, prompt: str, answer: str) -> None:
+        super().__init__("answered", f"{prompt}{answer}")
+        self.prompt = prompt
+        self.answer = answer
+
+    def compose(self) -> ComposeResult:
+        markup = f"[$muted]{escape(self.prompt)}[/][$answer]{escape(self.answer)}[/]"
+        yield Static(markup, classes="body")
+
+
+class Rows(Message):
+    """Names and what they are, in two columns, e.g. the folders /init lists."""
+
+    def __init__(self, rows: list[tuple[str, str]]) -> None:
+        super().__init__("normal", "\n".join(f"{a}  {b}" for a, b in rows))
+        self.add_class("-rows")
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Grid(classes="body rows"):
+            for name, text in self.rows:
+                yield Label(name, classes="name", markup=False)
+                yield Static(text, classes="text", markup=False)
+
+
+@dataclass
+class Asking:
+    """A command's open questions: the flow, the answers so far and what's next.
+
+    ``done`` gets the answers once every question is answered. ``nothing`` is
+    what cancelling says, e.g. "Nothing was added."
+    """
+
+    command: str
+    flow: Flow
+    done: Callable[[Answers], None]
+    nothing: str
+    answers: Answers = field(default_factory=dict)
+    question: Question | None = None
+
+
 class Welcome(HorizontalGroup):
     """The first line: ``Synthase 0.1.0. Type /quit or press Ctrl+Q to leave.``"""
 
@@ -152,6 +213,9 @@ class SynthaseApp(App):
         Binding("down", "step_history(1)", show=False),
         # Before Textual's own Tab, which would move the focus off the bar.
         Binding("tab", "complete", show=False, priority=True),
+        # Only while a question is open; otherwise the keys work as usual.
+        Binding("escape", "cancel", show=False, priority=True),
+        Binding("ctrl+c", "cancel", show=False, priority=True),
     ]
 
     def __init__(self, watch_css: bool = False) -> None:
@@ -165,13 +229,16 @@ class SynthaseApp(App):
         self.history_warned = False
         # The last choices Tab listed, so the same list isn't printed twice in a row.
         self.listed: tuple[str, ...] = ()
+        self.asking: Asking | None = None
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(Welcome(), id="output")
         with Vertical(id="bottom"):
-            with HorizontalGroup(id="bar"):
-                yield Label("> ", id="prompt", markup=False)
-                yield Input(placeholder=PLACEHOLDER, id="command", compact=True)
+            with Vertical(id="bar"):
+                yield Static(id="question", markup=False)
+                with HorizontalGroup(id="line"):
+                    yield Label("> ", id="prompt", markup=False)
+                    yield Input(placeholder=PLACEHOLDER, id="command", compact=True)
             yield Static(id="status")
 
     def on_mount(self) -> None:
@@ -208,6 +275,10 @@ class SynthaseApp(App):
             output.call_after_refresh(output.scroll_end, animate=False)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        if self.asking is not None:
+            event.input.clear()
+            self.answer(event.value)
+            return
         text = event.value.strip()
         event.input.clear()
         if not text:
@@ -225,6 +296,8 @@ class SynthaseApp(App):
             self.show_help(text.split()[1:])
         elif command.name == DOCTOR:
             self.run_doctor()
+        elif command.name == INIT:
+            self.run_init(text.split(maxsplit=1)[1:])
         else:
             self.say("error", NOT_YET.format(name=command.name))
 
@@ -239,7 +312,7 @@ class SynthaseApp(App):
 
     def run_doctor(self) -> None:
         """The self-test, worded as syn doctor words it (decisions 0010 and 0016)."""
-        report = run_checks()
+        report = run_checks(init="/init")
         text = report_text(report, rerun="/doctor")
         self.show(DoctorChecks(text.heading, report.checks))
         verified = report.config is not None and not text.unverified
@@ -248,6 +321,104 @@ class SynthaseApp(App):
         last.add_class("-doctor-last")
         self.show(last)
         self.refresh_status()
+
+    def run_init(self, rest: list[str]) -> None:
+        """Create or find the workspace, as syn init does (decision 0009).
+
+        Everything after /init is the path, with any quotes around it removed.
+        """
+        typed = rest[0].strip().strip("\"'") if rest else ""
+        path = Path(typed) if typed else None
+        try:
+            target = workspace_target(path)
+        except WorkspaceError as error:
+            self.say("error", str(error))
+            return
+        if not target.existing:
+            self.finish_init(path, replace=False)
+            return
+        question = Question("replace", target.question, text_only(is_yes))
+        self.ask(
+            "/init",
+            Flow((), (question,)),
+            lambda answers: self.finish_init(path, answers["replace"]),
+            "Nothing was changed.",
+        )
+
+    def finish_init(self, path: Path | None, replace: bool) -> None:
+        try:
+            created = create_workspace(path, lambda question: replace)
+        except WorkspaceError as error:
+            self.say("error", str(error))
+            return
+        text = init_text(created)
+        self.say("success", text.first)
+        self.show(Rows(text.rows))
+        if text.next is not None:
+            self.say("hint", text.next)
+        self.say("normal", text.last)
+        self.refresh_status()
+        # History lives in the workspace, so it follows the new one.
+        self.history = History.load(history_file())
+
+    def ask(
+        self,
+        command: str,
+        flow: Flow,
+        done: Callable[[Answers], None],
+        nothing: str,
+    ) -> None:
+        """Ask ``flow``'s questions in the command bar, then call ``done``.
+
+        Esc or Ctrl+C cancels and says ``nothing``, and ``done`` isn't called.
+        """
+        for line in flow.opening:
+            self.say("normal", line)
+        self.asking = Asking(command, flow, done, nothing)
+        bar = self.query_one("#bar")
+        bar.add_class("-answering")
+        bar.border_title = ANSWERING.format(command=command)
+        self.query_one("#command", Input).placeholder = ""
+        self.next_question()
+
+    def next_question(self) -> None:
+        asking = self.asking
+        asking.question = asking.flow.next_question(asking.answers)
+        if asking.question is None:
+            self.stop_asking()
+            asking.done(asking.answers)
+        else:
+            self.query_one("#question", Static).update(asking.question.prompt.rstrip())
+
+    def answer(self, text: str) -> None:
+        """Check the answer typed; a wrong one is explained and asked again."""
+        asking = self.asking
+        self.show(Answered(asking.question.prompt, text))
+        try:
+            answer = asking.question.answer(text, asking.answers)
+        except CompoundError as error:
+            self.say("error", str(error))
+            return
+        asking.answers[asking.question.key] = answer
+        self.next_question()
+
+    def stop_asking(self) -> None:
+        self.asking = None
+        bar = self.query_one("#bar")
+        bar.remove_class("-answering")
+        bar.border_title = ""
+        self.query_one("#question", Static).update("")
+        self.query_one("#command", Input).placeholder = PLACEHOLDER
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool:
+        # Esc and Ctrl+C cancel only while a question is open.
+        return action != "cancel" or self.asking is not None
+
+    def action_cancel(self) -> None:
+        nothing = self.asking.nothing
+        self.stop_asking()
+        self.query_one("#command", Input).clear()
+        self.say("cancel", CANCELLED.format(nothing=nothing))
 
     def remember(self, text: str) -> None:
         """Add a command to the history, saying once if the file can't be saved."""
@@ -264,11 +435,15 @@ class SynthaseApp(App):
         bar.cursor_position = len(text)
 
     def action_step_history(self, direction: int) -> None:
+        if self.asking is not None:
+            return
         step = self.history.back() if direction < 0 else self.history.forward()
         if step is not None:
             self.set_command(step)
 
     def action_complete(self) -> None:
+        if self.asking is not None:
+            return
         text = self.query_one("#command", Input).value
         result = complete(text, self.commands)
         if result.text != text:

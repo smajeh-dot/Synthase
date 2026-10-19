@@ -67,6 +67,15 @@ The owner answered the triage on 2026-10-18 and then had the look designed in a 
 - **Details settled for #70** (the owner chose the triage defaults, 2026-10-18):
   - **A missing `config.toml` is a config problem.** When the workspace has no `config.toml`, the status line shows `✗ config.toml has a problem, run /doctor`, the same as a broken one. It never counts the template's values as the workspace's own (decision 0010). `/doctor` names the missing file.
 
+- **Details settled for #56** (the owner chose the triage defaults, 2026-10-18):
+  - **Answering mode.** A command asks its questions from the shared question lists (`compound_questions.py`, #51). While a question is open, the top rule becomes heavy and blue with the bold title ` Answering /init · Esc cancels ` on the left. The question wraps on its own rows, in regular weight, just above `> ` and the input. The bar grows to fit them and shrinks back afterwards.
+  - **The record.** Each question and its answer are copied into the output as one line, like PowerShell: the question in muted grey, the answer in blue. A wrong answer adds `✗ <reason>` under it, and the same question stays in the bar. Enter is an answer: it skips a question that may be skipped and is explained on one that can't. `[y/N]` questions count only `yes` or `y` as yes.
+  - **Cancelling.** Esc or Ctrl+C cancels the whole command and saves nothing. Each command says what wasn't done: `‹ Cancelled. Nothing was changed.` for `/init`, and `‹ Cancelled. Nothing was added.` for the flows that add things. Outside answering mode the two keys work as before.
+  - **Keys and history while answering.** Up, Down and Tab do nothing. Answers are not saved to the command history, because the history is for commands and answers can hold compound details. The command that opened the questions is saved as usual.
+  - **`/init [path]`.** Everything after `/init` is the path, with any quotes around it removed, so a path with spaces (such as a OneDrive folder) works with or without quotes. `/init` alone uses `Documents\Synthase-data`. It asks decision 0009's replace question word for word, through the same `create_workspace` as `syn init`. Unlike `syn init`, where no input counts as no, cancelling in the app creates no folders and doesn't change `workspace.txt`.
+  - **Same words as `syn init`.** `workspace.py` holds `init`'s result lines, so `syn init` prints them and `/init` shows them. `syn init`'s output is unchanged. In the app the first line starts with `✓`, the folders sit in two columns, and `Next: …` is a `›` hint. Afterwards the status line and the command history both follow the new workspace.
+  - **`/doctor`'s Fix line** now says `run /init "<path>"` in the app. `syn doctor` keeps `syn init`.
+
 ## Consequences
 - Synthase gains its second run-time dependency. A new Textual major version needs a deliberate upgrade, because the pin stops at 9.
 - `workspace.current_workspace` now raises two kinds of `WorkspaceError`: `NoWorkspace` and `WorkspaceMissing`. The status line can then tell the two apart, and the plain command line's messages don't change.

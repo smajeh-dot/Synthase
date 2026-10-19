@@ -98,15 +98,32 @@ Screen {
 .msg.-unverified .key { color: $muted; }
 .msg.-unverified .value { color: $foreground; }
 
-/* Bottom block: rule, input, rule, then the status line */
+/* A question and its answer, kept as a record: the question muted, the
+   answer blue. */
+.msg.-answered > .body { color: $muted; }
+
+/* The folders /init lists: names in one column, what goes in them in the next,
+   lined up under the first line's text. */
+.msg.-rows > .rows {
+    height: auto;
+    padding-left: 2;
+    grid-size: 2;
+    grid-columns: auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+}
+.msg.-rows .rows > * { height: auto; }
+
+/* Bottom block: rule, input, rule, then the status line. While a question is
+   open the question sits above the input and the block grows to fit it. */
 #bottom {
     dock: bottom;
-    height: 4;
+    height: auto;
     background: $background;
 }
 
 #bar {
-    height: 3;
+    height: auto;
     padding: 0 1;
     border-top: solid $rule;
     border-bottom: solid $rule;
@@ -114,6 +131,23 @@ Screen {
     border-title-color: $muted;
     border-title-style: none;
 }
+
+#bar.-answering {
+    border-top: heavy $answer;
+    border-bottom: heavy $answer;
+    border-title-align: left;
+    border-title-color: $answer;
+    border-title-style: bold;
+}
+
+#question {
+    display: none;
+    height: auto;
+    color: $foreground;
+}
+#bar.-answering > #question { display: block; }
+
+#line { height: 1; }
 
 #prompt {
     width: auto;

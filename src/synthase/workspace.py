@@ -127,12 +127,35 @@ def check_outside_code_folder(path: Path) -> None:
         )
 
 
-def create_workspace(path: Path | None, ask: Callable[[str], bool]) -> Created:
-    """Create the workspace at ``path`` (or the default) and remember it.
+REPLACE_QUESTION = (
+    "A workspace already exists at {path}. Replace its config.toml with a fresh "
+    "copy of the template? Any values you have checked will be reset (the old "
+    "file is kept as config.toml.bak-…). Type yes to replace it [no]"
+)
+# What goes in each data folder, as `syn init` and `/init` list them.
+WORKSPACE_CONTENTS = (
+    ("raw", "plate reader exports, exactly as saved"),
+    ("maps", "plate maps (which compound is in which well)"),
+    ("results", "tables and figures Synthase makes"),
+    ("notebook", "your notebook entries"),
+)
 
-    ``ask`` is called with a question if the folder already has a config, and
-    returns True only if the user agreed to replace it.
-    """
+
+@dataclass(frozen=True)
+class Target:
+    """Where a workspace will be created, and whether it already has a config."""
+
+    path: Path
+    existing: bool
+
+    @property
+    def question(self) -> str:
+        """The replace question, without the ": " the answer follows."""
+        return REPLACE_QUESTION.format(path=self.path)
+
+
+def workspace_target(path: Path | None) -> Target:
+    """Check ``path`` (or the default) can hold a workspace, changing nothing."""
     path = (Path(path).expanduser() if path is not None else default_path()).resolve()
     check_outside_code_folder(path)
     if path.exists() and not path.is_dir():
@@ -140,25 +163,68 @@ def create_workspace(path: Path | None, ask: Callable[[str], bool]) -> Created:
             f"Synthase can't create the workspace there: {path} is a file, "
             "not a folder. Choose a folder instead."
         )
+    return Target(path, (path / WORKSPACE_CONFIG_NAME).exists())
 
+
+def create_workspace(path: Path | None, ask: Callable[[str], bool]) -> Created:
+    """Create the workspace at ``path`` (or the default) and remember it.
+
+    ``ask`` is called with a question if the folder already has a config, and
+    returns True only if the user agreed to replace it.
+    """
+    target = workspace_target(path)
+    path = target.path
     config = path / WORKSPACE_CONFIG_NAME
-    existed = config.exists()
-    replace = existed and ask(
-        f"A workspace already exists at {path}. Replace its config.toml with a "
-        "fresh copy of the template? Any values you have checked will be reset "
-        "(the old file is kept as config.toml.bak-…). Type yes to replace it [no]: "
-    )
+    replace = target.existing and ask(f"{target.question}: ")
 
     for name in FOLDERS:
         (path / name).mkdir(parents=True, exist_ok=True)
     backup = _back_up(config) if replace else None
-    if replace or not existed:
+    if replace or not target.existing:
         config.write_text(read_template(), encoding="utf-8")
     remember(path)
 
     if replace:
         return Created(path, "replaced", backup)
-    return Created(path, "kept" if existed else "copied")
+    return Created(path, "kept" if target.existing else "copied")
+
+
+@dataclass(frozen=True)
+class InitText:
+    """What `syn init` and `/init` say once the workspace is ready.
+
+    ``rows`` holds a (name, what goes in it) row for each folder and the config.
+    ``next`` is None when the config was kept as it was.
+    """
+
+    first: str
+    rows: list[tuple[str, str]]
+    next: str | None
+    last: str
+
+
+def init_text(created: Created) -> InitText:
+    if created.config == "copied":
+        first = f"Created the Synthase workspace at {created.path}"
+        config_line = "every scientific value Synthase uses, all unverified for now"
+    else:
+        first = f"Using the existing Synthase workspace at {created.path}"
+        config_line = (
+            "kept as it was"
+            if created.config == "kept"
+            else "a fresh copy of the template; "
+            f"the old one is saved as {created.backup.name}"
+        )
+    rows = [(name + os.sep, contents) for name, contents in WORKSPACE_CONTENTS]
+    rows.append((WORKSPACE_CONFIG_NAME, config_line))
+    next_step = (
+        None
+        if created.config == "kept"
+        else "Next: open config.toml and check each value against the literature."
+    )
+    return InitText(
+        first, rows, next_step, "Synthase will use this workspace from now on."
+    )
 
 
 def _timestamp() -> str:
