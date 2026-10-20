@@ -2053,7 +2053,7 @@ def test_fit_check_mistakes_say_what_is_wrong(tmp_path, fit_files):
     async def steps(app, pilot):
         await type_line(app, pilot, "fit")
         assert messages(app)[-2][1].startswith("Check measurements before a curve")
-        await type_line(app, pilot, "fit check")
+        await type_line(app, pilot, "fit check --x dose")
         assert messages(app)[-2:] == [
             ("error", "the following arguments are required: FILE"),
             ("hint", "Type help fit check to see how it's used."),
@@ -2093,3 +2093,167 @@ def test_help_and_tab_know_fit_check_from_the_parser():
         assert bar(app) == "fit check doses.csv --model "
 
     run(steps)
+
+
+GROWTH_FILE = (
+    "dose (µM),growth,note\n1,0.90,a\n2,0.80,b\n4,0.60,c\n8,0.35,d\n16,0.20,e\n"
+)
+GROWTH_PREVIEW = (
+    "growth.csv: 5 rows, 3 columns\n"
+    "dose (µM)  growth  note\n"
+    "1          0.90    a\n"
+    "2          0.80    b\n"
+    "4          0.60    c\n"
+    "8          0.35    d\n"
+    "16         0.20    e\n"
+    "Showing all 5 rows."
+)
+
+
+def syn_report(argv, capsys):
+    """What syn fit check prints for ``argv``, line by line."""
+    main(["fit", "check", *argv])
+    return capsys.readouterr().out.splitlines()
+
+
+def same_as_syn(report, printed):
+    """Whether the app's report says what syn printed, apart from syn's indent."""
+    heading, blank, *rows = report.text.splitlines()
+    return [heading, blank, *(f"  {row}" for row in rows)] == printed[: 2 + len(rows)]
+
+
+def test_fit_check_asks_the_questions_and_gives_syns_report(tmp_path, capsys):
+    doctor_workspace(tmp_path, unverified=17)
+    path = tmp_path / "growth.csv"
+    path.write_text(GROWTH_FILE, encoding="utf-8")
+    expected = syn_report([str(path), "--x", "dose", "--y", "growth"], capsys)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "fit check")
+        assert answering(app)
+        assert app.query_one("#bar").border_title == (
+            " Answering fit check · Esc cancels "
+        )
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Which file? Type its path, or drag it in:", f'"{path}"'),
+                ("Which column is x (dose (µM), growth, note):", "dose"),
+                # Only the columns left are listed.
+                ("Which column is y (growth, note):", "growth"),
+                # The unit comes from the column's name.
+                ("Unit of dose [µM]:", ""),
+                ("Unit of growth (Enter to skip):", ""),
+            ],
+        )
+        assert not answering(app)
+        assert ("normal", GROWTH_PREVIEW) in messages(app)
+        report = app.query_one(app_module.FitReport)
+        assert same_as_syn(report, expected)
+        a10 = [finding for finding in report.findings if finding.code == "A10"]
+        assert [(f.level, f.text) for f in a10] == [
+            ("flag", "No unit given for growth. Tables show it without one.")
+        ]
+
+    run(steps)
+
+
+def test_fit_check_answers_give_the_report_the_flags_give(tmp_path, capsys):
+    doctor_workspace(tmp_path, unverified=17)
+    path = tmp_path / "pairs.csv"
+    path.write_text(
+        "dose (µM),growth (OD),well\n1,0.9,a\n1,0.88,b\n2,0.7,c\n2,0.72,d\n"
+        "4,0.5,e\n4,0.52,f\n",
+        encoding="utf-8",
+    )
+    flags = [str(path), "--x", "dose", "--y", "growth", "--no-repeats"]
+    expected = syn_report(flags, capsys)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "fit check")
+        await answer_each(
+            app,
+            pilot,
+            [
+                ("Which file? Type its path, or drag it in:", str(path)),
+                ("Which column is x (dose (µM), growth (OD), well):", "dose (µM)"),
+                ("Which column is y (growth (OD), well):", "Growth"),
+                ("Unit of dose [µM]:", ""),
+                ("Unit of growth [OD]:", ""),
+                # Yes unless n or no, like the --repeats default.
+                (
+                    "Are growth values at the same dose repeats of one "
+                    "measurement? [Y/n]",
+                    "n",
+                ),
+            ],
+        )
+        report = app.query_one(app_module.FitReport)
+        assert same_as_syn(report, expected)
+
+    run(steps, size=(120, 30))
+
+
+def test_fit_check_questions_reask_skip_and_cancel(tmp_path):
+    doctor_workspace(tmp_path, unverified=17)
+    two = tmp_path / "two.csv"
+    two.write_text("dose (µM),growth\n1,0.9\n2,0.8\n4,0.5\n8,0.2\n", encoding="utf-8")
+    long = tmp_path / "long.csv"
+    long.write_text(
+        "x,y,z\n" + "".join(f"{n},{n / 10},w\n" for n in range(1, 11)),
+        encoding="utf-8",
+    )
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "fit check")
+        question = "Which file? Type its path, or drag it in:"
+        await answer_each(app, pilot, [(question, "")])
+        assert messages(app)[-1] == (
+            "error",
+            "Type the file's path, or drag the file in.",
+        )
+        await answer_each(app, pilot, [(question, str(tmp_path / "none.csv"))])
+        assert messages(app)[-1] == (
+            "error",
+            f"There's no file at {tmp_path / 'none.csv'}.",
+        )
+        # A file with two columns needs no x or y question.
+        await answer_each(app, pilot, [(question, str(two))])
+        assert messages(app)[-1] == (
+            "normal",
+            "two.csv: 4 rows, 2 columns\n"
+            "dose (µM)  growth\n"
+            "1          0.9\n"
+            "2          0.8\n"
+            "4          0.5\n"
+            "8          0.2\n"
+            "Showing all 4 rows.\n"
+            "Using dose (µM) as x and growth as y.",
+        )
+        assert bar_question(app) == "Unit of dose [µM]:"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not answering(app)
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was checked.")
+        # Only the first six rows are shown, and a column that isn't there is
+        # explained against the columns left.
+        await type_line(app, pilot, "fit check")
+        await answer_each(app, pilot, [(question, str(long))])
+        preview = [text for _, text in messages(app) if text.startswith("long.csv")]
+        assert preview[0].splitlines()[-2:] == [
+            "6  0.6  w",
+            ("Showing the first 6 of 10 rows."),
+        ]
+        await answer_each(app, pilot, [("Which column is x (x, y, z):", "x")])
+        await answer_each(app, pilot, [("Which column is y (y, z):", "x")])
+        assert messages(app)[-1] == (
+            "error",
+            'There\'s no column called "x". The columns are: y, z.',
+        )
+        # Everything fits inside the 120 × 30 screen.
+        screen = app.screen.region
+        for widget in (app.query_one("#bar"), app.query_one("#question")):
+            assert screen.contains_region(widget.region)
+
+    run(steps, size=(120, 30))

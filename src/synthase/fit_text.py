@@ -49,6 +49,19 @@ WHICH_COLUMNS = (
 )
 NOT_A_NUMBER = "[{key}] must be a number for fit check. Set it with config set {key}."
 
+NOTHING_CHECKED = "Nothing was checked."
+WHICH_FILE = "Which file? Type its path, or drag it in"
+NO_PATH = "Type the file's path, or drag the file in."
+WHICH_X = "Which column is x"
+WHICH_Y = "Which column is y"
+UNIT_OF = "Unit of {name}"
+UNIT_SKIP = "Unit of {name} (Enter to skip)"
+ARE_REPEATS = "Are {y} values at the same {x} repeats of one measurement?"
+USING = "Using {x} as x and {y} as y."
+# How many rows the preview shows, and the widest a cell is drawn.
+PREVIEW_ROWS = 6
+PREVIEW_WIDTH = 16
+
 FIX_POINTS = "Measure more points, or choose a shape with fewer settings."
 FIX_X_VALUES = "Measure at more {x} values, or choose a shape with fewer settings."
 FIX_NUMBERS = "Correct them in the file, or delete those rows."
@@ -94,6 +107,32 @@ def plural(count: int, one: str, many: str) -> str:
 
 def column_label(name: str, unit: str | None) -> str:
     return f"{name} ({unit})" if unit else name
+
+
+def preview(name: str, columns: Iterable[str], rows: list[tuple[str, ...]]) -> str:
+    """The file's title, its first rows in aligned columns, and a count line."""
+    columns = list(columns)
+    shown = rows[:PREVIEW_ROWS]
+    cells = [[_cell(text) for text in row] for row in [tuple(columns), *shown]]
+    widths = [max(len(row[i]) for row in cells) for i in range(len(columns))]
+    lines = [
+        f"{name}: {plural(len(rows), 'row', 'rows')}, "
+        f"{plural(len(columns), 'column', 'columns')}"
+    ]
+    for row in cells:
+        padded = (cell.ljust(width) for cell, width in zip(row, widths, strict=True))
+        lines.append("  ".join(padded).rstrip())
+    if len(shown) == len(rows):
+        lines.append(f"Showing all {plural(len(rows), 'row', 'rows')}.")
+    else:
+        lines.append(f"Showing the first {len(shown)} of {len(rows)} rows.")
+    return "\n".join(lines)
+
+
+def _cell(text: str) -> str:
+    if len(text) <= PREVIEW_WIDTH:
+        return text
+    return text[: PREVIEW_WIDTH - 1] + "…"
 
 
 def heading(file: str, x: str, y: str, shape: str | None, settings: int) -> str:
