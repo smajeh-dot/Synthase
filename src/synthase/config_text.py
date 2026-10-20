@@ -59,7 +59,14 @@ def config_entries(config: Config) -> list[ConfigValue]:
     return [config.get(key) for key in config.keys()]
 
 
-def settings_heading(config: Config) -> str:
+def group_entries(config: Config, group: str) -> list[ConfigValue]:
+    """The entries whose key starts with ``group``, e.g. every fit.* for fit."""
+    return [config.get(key) for key in config.keys() if key.startswith(f"{group}.")]
+
+
+def settings_heading(config: Config, group: str = "") -> str:
+    if group:
+        return f"{group} settings in {config.path}"
     return f"Settings in {config.path}"
 
 
@@ -78,9 +85,8 @@ def config_row(entry: ConfigValue) -> tuple[str, ...]:
     )
 
 
-def count_line(config: Config) -> str:
-    """How many values are still unverified, e.g. ``3 of 13 values are …``."""
-    entries = config_entries(config)
+def count_line(entries: list[ConfigValue]) -> str:
+    """How many of ``entries`` are still unverified, e.g. ``3 of 13 values are …``."""
     unverified = sum(not entry.verified for entry in entries)
     if not unverified:
         return f"All {len(entries)} values are verified."
