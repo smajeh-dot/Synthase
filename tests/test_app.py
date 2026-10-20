@@ -472,7 +472,7 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
             ),
             ("normal", "Synthase will use this workspace from now on."),
         ]
-        assert status_text(app).endswith("? 13 config values unverified")
+        assert status_text(app).endswith("? 17 config values unverified")
         assert all((folder / name).is_dir() for name in FOLDERS)
         config.write_text("# checked by hand\n" + config.read_text("utf-8"), "utf-8")
         before = config.read_text("utf-8")

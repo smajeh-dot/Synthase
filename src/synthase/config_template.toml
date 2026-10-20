@@ -128,6 +128,45 @@ unit = ""
 source = "UNVERIFIED placeholder: check against the literature"
 verified = false
 
+# --- Curve fitting ---
+# The limits `fit check` uses to say whether a data file is fit to have a curve
+# fitted to it. A "setting" is one number a shape has to find: a line has 2,
+# its slope and intercept.
+
+[fit.min_points_per_setting]
+name = "points per setting"
+value = 5
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+[fit.min_distinct_x]
+name = "fewest different x values"
+value = 5
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# The smallest share of the points each third of the x range should hold.
+
+[fit.coverage_min_fraction]
+name = "least share of points in each third of the x range"
+value = 0.2
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
+# How far a point can sit from the others, as a robust z-score (worked out from
+# the median and the median absolute deviation), before it is listed as
+# suspect. Suspect points are listed, never removed.
+
+[fit.outlier_flag]
+name = "suspect-point limit"
+value = 3.5
+unit = ""
+source = "UNVERIFIED placeholder: check against the literature"
+verified = false
+
 # --- Folders ---
 # Where each kind of table is saved (see docs/decisions/0015-table-folders.md).
 # These are folders, not scientific values, so they have no source or verified
