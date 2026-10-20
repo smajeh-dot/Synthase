@@ -1,4 +1,4 @@
-"""The text /config shows: the settings in config.toml, or one value in full.
+"""The text config shows: the settings in config.toml, or one value in full.
 
 The checks that come first, and the folder lines, are syn doctor's own, so the
 two say the same thing. Like doctor.py, nothing here prints anything. The
@@ -15,25 +15,25 @@ CONFIG_HEADINGS = ("Entry", "Value", "Unit", "Verified", "Source")
 # The words carry the meaning, so it never depends on colour (decision 0016).
 VERIFIED = "✓ yes"
 UNVERIFIED = "? no"
-ONE_NAME = "/config takes one entry name, e.g. /config mic.growth_threshold."
+ONE_NAME = "config takes one entry name, e.g. config mic.growth_threshold."
 # What each way of changing a setting takes, said when it is typed without it.
 EDIT_USAGE = {
-    "set": "/config set takes an entry name and a value, e.g. /config set "
+    "set": "config set takes an entry name and a value, e.g. config set "
     "mic.growth_threshold 0.1.",
-    "source": "/config source takes an entry name and the source, e.g. /config "
+    "source": "config source takes an entry name and the source, e.g. config "
     "source mic.growth_threshold <reference>.",
-    "verify": "/config verify takes one entry name, e.g. /config verify "
+    "verify": "config verify takes one entry name, e.g. config verify "
     "mic.growth_threshold.",
-    "folder": "/config folder takes a folder setting and a folder, e.g. /config "
+    "folder": "config folder takes a folder setting and a folder, e.g. config "
     'folder compounds D:\\Lab\\Compound tables, or "" to clear it.',
 }
 BACKED_UP = "The old file is kept as {name}."
-EVERY_ENTRY = "Type /config to see every entry."
+EVERY_ENTRY = "Type config to see every entry."
 
 
 @dataclass(frozen=True)
 class Settings:
-    """What /config found: the failing check, or the config and folder checks."""
+    """What config found: the failing check, or the config and folder checks."""
 
     problem: Check | None
     config: Config | None = None
@@ -89,7 +89,7 @@ def count_line(config: Config) -> str:
 
 
 def entry_key(typed: str) -> str:
-    """The key a name typed after /config means, ignoring capitals and [ ]."""
+    """The key a name typed after config means, ignoring capitals and [ ]."""
     return typed.strip().lower().removeprefix("[").removesuffix("]")
 
 

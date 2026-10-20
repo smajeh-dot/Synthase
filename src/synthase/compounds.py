@@ -1,6 +1,6 @@
 """The compound register: every compound in the project, from idea to tested.
 
-This is the shared command layer for `/compound` (decision 0012). It does the
+This is the shared command layer for `compound` (decision 0012). It does the
 work and raises CompoundError with a message for the user, but never prints or
 asks anything; the command line and the app do that. The rules are in
 docs/decisions/0014-compound-register.md.

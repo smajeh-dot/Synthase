@@ -21,22 +21,28 @@ ROOT = command_list()
 @pytest.mark.parametrize(
     ("typed", "completed"),
     [
+        ("comp", "compound "),
+        ("COMP", "compound "),
+        ("q", "quit "),
         ("/comp", "/compound "),
         ("/COMP", "/compound "),
         ("/q", "/quit "),
-        ("/compound sh", "/compound show "),
+        ("compound sh", "compound show "),
         ("/Compound SH", "/Compound show "),
-        ("/compound list --sta", "/compound list --status "),
+        ("compound list --sta", "compound list --status "),
         (
-            "/compound list --status final --cl",
-            "/compound list --status final --class ",
+            "compound list --status final --cl",
+            "compound list --status final --class ",
         ),
-        ("/compound e", "/compound edit"),
+        ("compound e", "compound edit"),
+        ("  doc", "  doctor "),
         ("  /doc", "  /doctor "),
+        ("he", "help "),
         ("/he", "/help "),
-        ("/help com", "/help compound "),
+        ("help com", "help compound "),
+        ("con", "config "),
         ("/con", "/config "),
-        ("/help compound ba", "/help compound batch "),
+        ("help compound ba", "help compound batch "),
     ],
 )
 def test_one_match_or_a_longer_shared_start_completes(typed, completed):
@@ -46,10 +52,11 @@ def test_one_match_or_a_longer_shared_start_completes(typed, completed):
 @pytest.mark.parametrize(
     ("typed", "choices"),
     [
-        ("/compound edit", ("edit", "edit-batch")),
-        ("/compound edit 1 --rf", ("--rf", "--rf-solvent")),
+        ("compound edit", ("edit", "edit-batch")),
+        ("compound edit 1 --rf", ("--rf", "--rf-solvent")),
+        ("", ("compound", "config", "doctor", "help", "init", "quit")),
         ("/", ("/compound", "/config", "/doctor", "/help", "/init", "/quit")),
-        ("/help co", ("compound", "config")),
+        ("help co", ("compound", "config")),
     ],
 )
 def test_several_matches_are_listed_and_the_text_is_kept(typed, choices):
@@ -57,8 +64,8 @@ def test_several_matches_are_listed_and_the_text_is_kept(typed, choices):
 
 
 def test_a_space_after_a_command_lists_its_subcommands():
-    result = complete("/compound ", ROOT)
-    assert result.text == "/compound "
+    result = complete("compound ", ROOT)
+    assert result.text == "compound "
     assert result.choices[:3] == ("add", "archive", "batch")
     assert "show" in result.choices
 
@@ -66,13 +73,12 @@ def test_a_space_after_a_command_lists_its_subcommands():
 @pytest.mark.parametrize(
     "typed",
     [
-        "",
-        "comp",
+        "zzz",
         "/zzz",
-        "/compound show 1",
-        "/compound show SYN-0",
-        "/compound list --zzz",
-        "/compound list --he",
+        "compound show 1",
+        "compound show SYN-0",
+        "compound list --zzz",
+        "compound list --he",
     ],
 )
 def test_nothing_to_complete_leaves_the_text_alone(typed):
@@ -88,14 +94,18 @@ def test_a_new_parser_command_is_completed_with_no_extra_work(monkeypatch):
 
     monkeypatch.setattr("synthase.commands.build_parser", parser_with_a_new_command)
     root = command_list()
+    assert complete("pla", root).text == "plate "
     assert complete("/pla", root).text == "/plate "
+    assert complete("plate --we", root).text == "plate --wells "
     assert complete("/plate --we", root).text == "/plate --wells "
 
 
 def test_find_names_the_top_level_command_ignoring_spaces_and_capitals():
     assert find("  /COMPOUND show 1", ROOT).name == "compound"
+    assert find("compound show 1", ROOT).name == "compound"
+    assert find("quit", ROOT).name == "quit"
     assert find("/quit", ROOT).name == "quit"
-    assert find("quit", ROOT) is None
+    assert find("zzz", ROOT) is None
     assert find("/zzz", ROOT) is None
     assert find("", ROOT) is None
 
@@ -109,15 +119,15 @@ def test_help_and_version_options_are_not_offered():
 def test_help_lists_every_command_then_how_to_get_more():
     page = help_page([], ROOT)
     assert [name for name, _ in page.rows] == [
-        "/init",
-        "/doctor",
-        "/compound",
-        "/config",
-        "/help",
-        "/quit",
+        "init",
+        "doctor",
+        "compound",
+        "config",
+        "help",
+        "quit",
     ]
-    assert dict(page.rows)["/quit"] == "leave Synthase (or press Ctrl+Q)"
-    assert page.hint == "Type /help <command> for more, e.g. /help compound."
+    assert dict(page.rows)["quit"] == "leave Synthase (or press Ctrl+Q)"
+    assert page.hint == "Type help <command> for more, e.g. help compound."
     assert page.paragraphs == ()
     assert page.error == ""
 
@@ -127,18 +137,17 @@ def test_help_on_a_command_lists_its_subcommands():
     assert page.paragraphs == (
         "Keep track of the project's compounds, from idea to tested.",
     )
-    assert page.rows[0] == ("/compound add", "add a compound to the register")
-    assert ("/compound batch", "add a batch made of a compound") in page.rows
+    assert page.rows[0] == ("compound add", "add a compound to the register")
+    assert ("compound batch", "add a batch made of a compound") in page.rows
     assert page.hint == (
-        "For a command's options, type /help compound <command>, "
-        "e.g. /help compound add."
+        "For a command's options, type help compound <command>, e.g. help compound add."
     )
 
 
 def test_help_on_one_command_shows_its_usage_arguments_and_options():
     page = help_page(["compound", "batch"], ROOT)
     usage, description = page.paragraphs
-    assert usage == "/compound batch ID [--date DATE] [--mass MASS] [--yield PERCENT]"
+    assert usage == "compound batch ID [--date DATE] [--mass MASS] [--yield PERCENT]"
     assert description.startswith("Add a batch made of a compound")
     assert page.rows == (
         ("ID", "its ID, such as SYN-001"),
@@ -152,15 +161,15 @@ def test_help_on_one_command_shows_its_usage_arguments_and_options():
 @pytest.mark.parametrize(
     ("topic", "usage"),
     [
-        (["init"], "/init [PATH]"),
-        (["doctor"], "/doctor"),
-        (["compound", "unlink"], "/compound unlink ID [FILE]"),
+        (["init"], "init [PATH]"),
+        (["doctor"], "doctor"),
+        (["compound", "unlink"], "compound unlink ID [FILE]"),
         (
             ["compound", "list"],
-            "/compound list [--status STATUS] [--class CLASS] [--all] [--csv FILE]",
+            "compound list [--status STATUS] [--class CLASS] [--all] [--csv FILE]",
         ),
-        (["help"], "/help [COMMAND]"),
-        (["quit"], "/quit"),
+        (["help"], "help [COMMAND]"),
+        (["quit"], "quit"),
     ],
 )
 def test_usage_lines(topic, usage):
@@ -187,18 +196,18 @@ def test_help_and_version_options_are_not_in_the_help():
             "Topics: init, doctor, compound, config, help, quit.",
         ),
         (
-            ["/compound", "zzz"],
+            ["compound", "zzz"],
             'There\'s no help on "compound zzz". Topics: add, edit, archive, '
             "restore, history, batch, edit-batch, remove-batch, spectrum, unlink, "
             "show, list.",
         ),
         (
             ["compound", "batch", "1"],
-            'There\'s no help on "compound batch 1". Try /help compound batch.',
+            'There\'s no help on "compound batch 1". Try help compound batch.',
         ),
         (
             ["help", "compound"],
-            'There\'s no help on "help compound". Try /help help.',
+            'There\'s no help on "help compound". Try help help.',
         ),
     ],
 )
@@ -214,11 +223,11 @@ def _subparsers(parser):
 
 
 def test_every_help_string_in_the_parser_is_in_the_help():
-    """Walk build_parser() itself, so /help and syn --help can't drift apart."""
+    """Walk build_parser() itself, so help and syn --help can't drift apart."""
 
     def check(parser, topic):
         page = help_page(topic, ROOT)
-        if topic:  # /help alone is just the list
+        if topic:  # help alone is just the list
             assert (parser.description or "") in page.paragraphs + ("",)
         subparsers = _subparsers(parser)
         if subparsers is None:
@@ -247,8 +256,8 @@ def test_a_new_parser_command_is_in_the_help_with_no_extra_work(monkeypatch):
 
     monkeypatch.setattr("synthase.commands.build_parser", parser_with_a_new_command)
     root = command_list()
-    assert ("/plate", "design a plate") in help_page([], root).rows
+    assert ("plate", "design a plate") in help_page([], root).rows
     assert help_page(["plate"], root) == HelpPage(
-        paragraphs=("/plate [--wells WELLS]", "D."),
+        paragraphs=("plate [--wells WELLS]", "D."),
         rows=(("--wells WELLS", "how many wells"),),
     )

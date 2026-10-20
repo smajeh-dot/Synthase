@@ -86,22 +86,22 @@ def test_set_text_without_quotes(invented_config):
         (
             "test.alpha",
             "lots",
-            "[test.alpha] takes a number, e.g. /config set test.alpha 2.5.",
+            "[test.alpha] takes a number, e.g. config set test.alpha 2.5.",
         ),
         (
             "test.alpha",
             "nan",
-            "[test.alpha] takes a number, e.g. /config set test.alpha 2.5.",
+            "[test.alpha] takes a number, e.g. config set test.alpha 2.5.",
         ),
         (
             "test.alpha",
             "2,5",
-            "[test.alpha] takes a number, e.g. /config set test.alpha 2.5.",
+            "[test.alpha] takes a number, e.g. config set test.alpha 2.5.",
         ),
         (
             "test.beta",
             "2",
-            "[test.beta] takes a range of two numbers, e.g. /config set test.beta 1 3.",
+            "[test.beta] takes a range of two numbers, e.g. config set test.beta 1 3.",
         ),
         (
             "test.beta",
@@ -112,13 +112,13 @@ def test_set_text_without_quotes(invented_config):
         (
             "test.gamma",
             "low, high",
-            "[test.gamma] takes a list of bands, e.g. /config set test.gamma 1 low, "
+            "[test.gamma] takes a list of bands, e.g. config set test.gamma 1 low, "
             "high.",
         ),
         (
             "test.gamma",
             "high",
-            "[test.gamma] takes a list of bands, e.g. /config set test.gamma 1 low, "
+            "[test.gamma] takes a list of bands, e.g. config set test.gamma 1 low, "
             "high.",
         ),
         (
@@ -165,7 +165,7 @@ def test_a_source_for_an_unverified_value_needs_no_question(invented_config):
     save_edit(edit, back_up=False)
     assert edit.done == "Changed the source of delta unit."
     assert edit.hint == (
-        "Type /config verify test.delta once you have checked the value against it."
+        "Type config verify test.delta once you have checked the value against it."
     )
     entry = load_config(invented_config).get("test.delta")
     assert (entry.source, entry.verified) == ("Invented Tables, p. 9", False)
@@ -205,7 +205,7 @@ def test_verify_refuses_a_placeholder_source(invented_config):
     with pytest.raises(ConfigError) as error:
         plan_verify(invented_config, "test.gamma")
     assert str(error.value) == (
-        "Set its source first: /config source test.gamma <reference>."
+        "Set its source first: config source test.gamma <reference>."
     )
 
 

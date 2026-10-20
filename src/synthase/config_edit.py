@@ -90,9 +90,7 @@ def plan_source(workspace: Path, name: str, source: str) -> Edit:
             f'{entry.name} is verified. Change its source to "{source}"? '
             f"{UNVERIFIED_AGAIN} Type yes to change it [no]"
         )
-    hint = (
-        f"Type /config verify {entry.key} once you have checked the value against it."
-    )
+    hint = f"Type config verify {entry.key} once you have checked the value against it."
     return file.change(entry, fields, done=done, question=question, hint=hint)
 
 
@@ -104,7 +102,7 @@ def plan_verify(workspace: Path, name: str) -> Edit:
         return file.unchanged(f"{entry.name} is already verified.")
     if entry.source.strip().upper().startswith("UNVERIFIED"):
         raise ConfigError(
-            f"Set its source first: /config source {entry.key} <reference>."
+            f"Set its source first: config source {entry.key} <reference>."
         )
     return file.change(
         entry,
@@ -277,7 +275,7 @@ def _typed_value(entry: ConfigValue, typed: str) -> object:
         kind = "a number"
     if new is None:
         raise ConfigError(
-            f"[{entry.key}] takes {kind}, e.g. /config set {entry.key} "
+            f"[{entry.key}] takes {kind}, e.g. config set {entry.key} "
             f"{_example(value)}."
         )
     # _typed_bands gives a problem as text; any other text is a text value.
@@ -289,7 +287,7 @@ def _typed_value(entry: ConfigValue, typed: str) -> object:
 
 
 def _typed_bands(typed: str) -> list[dict] | str | None:
-    """Bands typed as /config shows them; None if not bands, or a problem."""
+    """Bands typed as config shows them; None if not bands, or a problem."""
     parts = [part.strip() for part in typed.split(",")]
     if len(parts) < 2 or not all(parts):
         return None
@@ -314,7 +312,7 @@ def _number(text: str) -> int | float:
 
 
 def _example(value) -> str:
-    """The value as /config set takes it, e.g. ``1 3`` for a range."""
+    """The value as config set takes it, e.g. ``1 3`` for a range."""
     if isinstance(value, list) and isinstance(value[0], dict):
         limits = [f"{band['max']:g} {band['label']}" for band in value[:-1]]
         return ", ".join([*limits, value[-1]["label"]])

@@ -153,9 +153,9 @@ from synthase.workspace import (
     workspace_target,
 )
 
-PLACEHOLDER = "Type a command, e.g. /help"
-WELCOME = "Type /quit or press Ctrl+Q to leave."
-UNKNOWN = "unknown command, try /help"
+PLACEHOLDER = "Type a command, e.g. help"
+WELCOME = "Type quit or press Ctrl+Q to leave."
+UNKNOWN = "unknown command, try help"
 NOT_SAVED = "Command history couldn't be saved: {reason}"
 QUIT = "quit"
 DOCTOR = "doctor"
@@ -199,7 +199,7 @@ class Message(HorizontalGroup):
 
 
 class HelpMessage(Message):
-    """A /help page: its paragraphs, then names and their help in two columns."""
+    """A help page: its paragraphs, then names and their help in two columns."""
 
     def __init__(self, page: HelpPage) -> None:
         rows = "\n".join(f"{name}  {text}" for name, text in page.rows)
@@ -219,9 +219,9 @@ class HelpMessage(Message):
 
 
 class DoctorChecks(Message):
-    """The /doctor heading, then each check's word and text in two columns.
+    """The doctor heading, then each check's word and text in two columns.
 
-    With no heading, only the checks, e.g. the folder lines /config shows.
+    With no heading, only the checks, e.g. the folder lines config shows.
     """
 
     def __init__(self, heading: str, checks: Iterable[Check]) -> None:
@@ -251,7 +251,7 @@ class DoctorChecks(Message):
 
 
 class UnverifiedValues(Message):
-    """The /doctor list of unverified values: its title, then key, value and source."""
+    """The doctor list of unverified values: its title, then key, value and source."""
 
     def __init__(self, text: ReportText, verified: bool) -> None:
         rows = [f"{key}  {value}\n{source}" for key, value, source in text.unverified]
@@ -280,7 +280,7 @@ def verified_kind(text: str) -> str:
 
 
 class ConfigTable(Message):
-    """The /config heading, then a row per value under a bold heading row."""
+    """The config heading, then a row per value under a bold heading row."""
 
     def __init__(self, heading: str, entries: list[ConfigValue]) -> None:
         self.heading = heading
@@ -338,7 +338,7 @@ class Answered(Message):
 
 
 class Rows(Message):
-    """Names and what they are, in two columns, e.g. the folders /init lists."""
+    """Names and what they are, in two columns, e.g. the folders init lists."""
 
     def __init__(self, rows: list[tuple[str, str]]) -> None:
         super().__init__("normal", "\n".join(f"{a}  {b}" for a, b in rows))
@@ -515,7 +515,7 @@ class Asking:
 
 
 class Welcome(HorizontalGroup):
-    """The first line: ``Synthase 0.1.0. Type /quit or press Ctrl+Q to leave.``"""
+    """The first line: ``Synthase 0.1.0. Type quit or press Ctrl+Q to leave.``"""
 
     def __init__(self) -> None:
         super().__init__(classes="msg -welcome")
@@ -646,8 +646,8 @@ class SynthaseApp(App):
 
     def run_doctor(self) -> None:
         """The self-test, worded as syn doctor words it (decisions 0010 and 0016)."""
-        report = run_checks(init="/init")
-        text = report_text(report, rerun="/doctor")
+        report = run_checks(init="init")
+        text = report_text(report, rerun="doctor")
         self.show(DoctorChecks(text.heading, report.checks))
         verified = report.config is not None and not text.unverified
         self.show(UnverifiedValues(text, verified))
@@ -659,7 +659,7 @@ class SynthaseApp(App):
     def run_config(self, rest: str) -> None:
         """The settings, or one value in full, checked as syn doctor checks them.
 
-        ``rest`` is everything typed after /config. A first word such as set
+        ``rest`` is everything typed after config. A first word such as set
         changes a setting instead (decision 0017).
         """
         names = rest.split()
@@ -692,7 +692,7 @@ class SynthaseApp(App):
 
     def read_config_settings(self) -> Settings | None:
         """The checked settings, or None after saying what doctor says is wrong."""
-        settings = read_settings(init="/init")
+        settings = read_settings(init="init")
         self.refresh_status()
         if settings.problem is None:
             return settings
@@ -741,7 +741,7 @@ class SynthaseApp(App):
             else:
                 self.say("cancel", NOTHING_CHANGED)
 
-        self.ask(f"/config {how}", Flow((), (question,)), done, NOTHING_CHANGED)
+        self.ask(f"config {how}", Flow((), (question,)), done, NOTHING_CHANGED)
 
     def save_config(self, edit: Edit, folders: bool) -> None:
         """Save ``edit``, keeping a backup before the file's first change."""
@@ -764,7 +764,7 @@ class SynthaseApp(App):
     def run_init(self, rest: list[str]) -> None:
         """Create or find the workspace, as syn init does (decision 0009).
 
-        Everything after /init is the path, with any quotes around it removed.
+        Everything after init is the path, with any quotes around it removed.
         """
         typed = rest[0].strip().strip("\"'") if rest else ""
         path = Path(typed) if typed else None
@@ -778,7 +778,7 @@ class SynthaseApp(App):
             return
         question = Question("replace", target.question, text_only(is_yes))
         self.ask(
-            "/init",
+            "init",
             Flow((), (question,)),
             lambda answers: self.finish_init(path, answers["replace"]),
             "Nothing was changed.",
@@ -801,7 +801,7 @@ class SynthaseApp(App):
         self.history = History.load(history_file())
 
     def run_compound(self, text: str) -> None:
-        """The /compound commands the app has, read as syn compound reads them."""
+        """The compound commands the app has, read as syn compound reads them."""
         try:
             words = split_words(text)[1:]
         except UsageError as error:
@@ -863,7 +863,7 @@ class SynthaseApp(App):
             def done(answers: Answers) -> None:
                 self.finish_add(workspace, compound_answers(answers))
 
-            self.ask("/compound add", add_flow(workspace), done, NOTHING_ADDED)
+            self.ask("compound add", add_flow(workspace), done, NOTHING_ADDED)
         elif args.label is None:
             self.say("error", in_app(LABEL_NEEDED))
         else:
@@ -894,7 +894,7 @@ class SynthaseApp(App):
             self.confirm_edit(workspace, args.id, compound_answers(answers))
 
         flow = edit_flow(workspace, compound)
-        self.ask("/compound edit", flow, done, NOTHING_CHANGED)
+        self.ask("compound edit", flow, done, NOTHING_CHANGED)
 
     def confirm_edit(
         self, workspace: Path, text: str, values: dict[str, object]
@@ -912,7 +912,7 @@ class SynthaseApp(App):
         def done(answers: Answers) -> None:
             self.finish_edit(workspace, text, values, confirmed(changes, answers))
 
-        self.ask("/compound edit", flow, done, NOTHING_CHANGED)
+        self.ask("compound edit", flow, done, NOTHING_CHANGED)
 
     def finish_edit(
         self,
@@ -943,7 +943,7 @@ class SynthaseApp(App):
             archive_compound(workspace, text)
             self.say("success", in_app(archived_text(compound)))
 
-        self.confirm("/compound archive", archive_question(compound), archive)
+        self.confirm("compound archive", archive_question(compound), archive)
 
     def run_batch(self, args: argparse.Namespace, workspace: Path) -> None:
         """Add a batch as syn compound batch does: from options, or by asking."""
@@ -962,7 +962,7 @@ class SynthaseApp(App):
                 answers["yield_percent"],
             )
 
-        self.ask("/compound batch", batch_flow(compound), done, NOTHING_ADDED)
+        self.ask("compound batch", batch_flow(compound), done, NOTHING_ADDED)
 
     def finish_batch(
         self,
@@ -1003,7 +1003,7 @@ class SynthaseApp(App):
             self.confirm_batch(workspace, args, answers)
 
         flow = edit_batch_flow(compound, batch)
-        self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+        self.ask("compound edit-batch", flow, done, NOTHING_CHANGED)
 
     def confirm_batch(
         self, workspace: Path, args: argparse.Namespace, values: Answers
@@ -1023,7 +1023,7 @@ class SynthaseApp(App):
 
         flow = confirm_flow(changes)
         if flow.questions:
-            self.ask("/compound edit-batch", flow, done, NOTHING_CHANGED)
+            self.ask("compound edit-batch", flow, done, NOTHING_CHANGED)
         else:
             done({})
 
@@ -1036,7 +1036,7 @@ class SynthaseApp(App):
             self.say("success", in_app(batch_removed_text(compound, batch)))
 
         question = remove_batch_question(compound, batch)
-        self.confirm("/compound remove-batch", question, remove)
+        self.confirm("compound remove-batch", question, remove)
 
     def run_spectrum(self, args: argparse.Namespace, workspace: Path) -> None:
         """Link a spectra file as syn compound spectrum does: given, or by asking."""
@@ -1051,7 +1051,7 @@ class SynthaseApp(App):
             self.finish_link(workspace, args.id, answers["file"], answers["kind"])
 
         flow = spectrum_flow(workspace, compound)
-        self.ask("/compound spectrum", flow, done, NOTHING_LINKED)
+        self.ask("compound spectrum", flow, done, NOTHING_LINKED)
 
     def finish_link(
         self, workspace: Path, text: str, file: Path, kind: str | None
@@ -1074,7 +1074,7 @@ class SynthaseApp(App):
             self.confirm_unlink(workspace, args.id, answers["file"])
 
         flow = unlink_flow(workspace, compound)
-        self.ask("/compound unlink", flow, done, NOTHING_CHANGED)
+        self.ask("compound unlink", flow, done, NOTHING_CHANGED)
 
     def confirm_unlink(self, workspace: Path, text: str, file: str) -> None:
         compound, spectrum = get_spectrum(workspace, text, file)
@@ -1084,7 +1084,7 @@ class SynthaseApp(App):
             self.say("success", unlinked_text(compound, spectrum))
 
         question = unlink_question(compound, spectrum)
-        self.confirm("/compound unlink", question, unlink)
+        self.confirm("compound unlink", question, unlink)
 
     def confirm(
         self, command: str, question: Question, then: Callable[[], None]
@@ -1141,7 +1141,7 @@ class SynthaseApp(App):
                 self.say("normal", kept_text(path))
 
         flow = Flow((), (question,))
-        self.ask("/compound list", flow, done, "The table was not saved.")
+        self.ask("compound list", flow, done, "The table was not saved.")
 
     def write_table(self, path: Path, rows: list[tuple]) -> None:
         try:
@@ -1258,8 +1258,8 @@ class SynthaseApp(App):
 
 # Shared messages name syn commands; in the app they name its own.
 IN_APP = (
-    ('"syn compound ', '"/compound '),
-    ('"syn init"', '"/init"'),
+    ('"syn compound ', '"compound '),
+    ('"syn init"', '"init"'),
 )
 
 

@@ -91,11 +91,23 @@ def test_unknown_command_is_echoed_then_refused():
     run(steps)
 
 
-def test_quit_without_the_slash_is_unknown():
+def test_quit_closes_the_app_without_the_slash():
     async def steps(app, pilot):
         await type_line(app, pilot, "quit")
-        assert messages(app)[-1] == ("error", UNKNOWN)
-        assert app.is_running
+
+    app = run(steps)
+    assert not app.is_running
+    assert app.return_code == 0
+
+
+def test_a_command_gives_the_same_output_with_or_without_the_slash():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "help compound")
+        bare = messages(app)[1:]
+        app.query_one("#output").remove_children(Message)
+        await type_line(app, pilot, "/help compound")
+        assert bare
+        assert messages(app)[1:] == bare
 
     run(steps)
 
@@ -145,7 +157,7 @@ def test_status_line_shows_the_workspace_and_two_unverified_values(tmp_path):
 
 def test_status_line_with_no_workspace_points_to_init():
     async def steps(app, pilot):
-        assert status_text(app) == "› No workspace yet. Type /init to create one."
+        assert status_text(app) == "› No workspace yet. Type init to create one."
 
     run(steps)
 
@@ -189,12 +201,14 @@ def test_up_and_down_step_through_three_commands():
 
 def test_tab_completes_commands_and_subcommands_and_keeps_the_focus():
     async def steps(app, pilot):
+        await press_tab(app, pilot, "comp")
+        assert bar(app) == "compound "
         await press_tab(app, pilot, "/comp")
         assert bar(app) == "/compound "
-        await press_tab(app, pilot, "/compound sh")
-        assert bar(app) == "/compound show "
-        await press_tab(app, pilot, "/compound list --sta")
-        assert bar(app) == "/compound list --status "
+        await press_tab(app, pilot, "compound sh")
+        assert bar(app) == "compound show "
+        await press_tab(app, pilot, "compound list --sta")
+        assert bar(app) == "compound list --status "
         assert app.focused is app.query_one("#command")
         assert messages(app) == []
 
@@ -203,10 +217,10 @@ def test_tab_completes_commands_and_subcommands_and_keeps_the_focus():
 
 def test_tab_lists_several_matches_once():
     async def steps(app, pilot):
-        await press_tab(app, pilot, "/compound edit")
+        await press_tab(app, pilot, "compound edit")
         await pilot.press("tab")
         await pilot.pause()
-        assert bar(app) == "/compound edit"
+        assert bar(app) == "compound edit"
         assert messages(app) == [("hint", "edit  edit-batch")]
 
     run(steps)
@@ -216,11 +230,11 @@ def test_history_is_kept_in_the_workspace_between_sessions(tmp_path):
     folder = invented_workspace(tmp_path, unverified=0)
 
     async def first(app, pilot):
-        for line in ("/one", "/two", "/quit"):
+        for line in ("/one", "/two", "quit"):
             await type_line(app, pilot, line)
 
     run(first)
-    assert (folder / FILE_NAME).read_text(encoding="utf-8") == "/one\n/two\n/quit\n"
+    assert (folder / FILE_NAME).read_text(encoding="utf-8") == "/one\n/two\nquit\n"
 
     async def second(app, pilot):
         for _ in range(2):
@@ -248,18 +262,18 @@ def test_a_history_file_that_cant_be_saved_is_reported_once(tmp_path, monkeypatc
 
 def test_help_lists_every_command_then_how_to_get_more():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help")
+        await type_line(app, pilot, "help")
         echo, rows, hint = messages(app)
-        assert echo == ("echo", "/help")
+        assert echo == ("echo", "help")
         assert rows[0] == "normal"
         lines = rows[1].splitlines()
         assert [line.split()[0] for line in lines] == [
-            "/init",
-            "/doctor",
-            "/compound",
-            "/config",
-            "/help",
-            "/quit",
+            "init",
+            "doctor",
+            "compound",
+            "config",
+            "help",
+            "quit",
         ]
         assert "keep track of the project's compounds" in lines[2]
         assert hint == ("hint", ROOT_HINT)
@@ -269,22 +283,22 @@ def test_help_lists_every_command_then_how_to_get_more():
 
 def test_help_on_compound_shows_its_description_and_subcommands():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help Compound")
+        await type_line(app, pilot, "help Compound")
         _, page, hint = messages(app)
         assert page[1].startswith(
             "Keep track of the project's compounds, from idea to tested.\n\n"
         )
-        assert "/compound batch  add a batch made of a compound" in page[1]
-        assert hint[1].endswith("e.g. /help compound add.")
+        assert "compound batch  add a batch made of a compound" in page[1]
+        assert hint[1].endswith("e.g. help compound add.")
 
     run(steps)
 
 
 def test_help_on_one_command_shows_its_options_and_wraps_at_80_columns():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help compound list")
+        await type_line(app, pilot, "help compound list")
         _, page = messages(app)
-        assert page[1].startswith("/compound list [--status STATUS]")
+        assert page[1].startswith("compound list [--status STATUS]")
         assert "--csv FILE  also save the table as a CSV file." in page[1]
         # The help column wraps inside the window, under its own column.
         body = app.query(Message).last().query_one(".body")
@@ -296,7 +310,7 @@ def test_help_on_one_command_shows_its_options_and_wraps_at_80_columns():
 
 def test_an_unknown_help_topic_lists_the_topics():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help foo")
+        await type_line(app, pilot, "help foo")
         assert messages(app)[-1] == (
             "error",
             'There\'s no help on "foo". '
@@ -308,8 +322,8 @@ def test_an_unknown_help_topic_lists_the_topics():
 
 def test_tab_completes_a_help_topic():
     async def steps(app, pilot):
-        await press_tab(app, pilot, "/help com")
-        assert bar(app) == "/help compound "
+        await press_tab(app, pilot, "help com")
+        assert bar(app) == "help compound "
 
     run(steps)
 
@@ -339,9 +353,9 @@ def test_doctor_shows_the_same_lines_as_syn_doctor(tmp_path, capsys):
         config = tmp_path / "again" / "Documents" / "Synthase" / "config.toml"
         (folder / "config.toml").write_bytes(config.read_bytes())
         remember(folder)
-        await type_line(app, pilot, "/doctor")
+        await type_line(app, pilot, "doctor")
         echo, checks, unverified, last = messages(app)
-        assert echo == ("echo", "/doctor")
+        assert echo == ("echo", "doctor")
         lines = [line.strip() for line in checks[1].splitlines()]
         assert lines == printed[: len(lines)]
         assert lines[0] == f"Synthase {__version__} self-test"
@@ -366,11 +380,11 @@ def test_doctor_with_config_toml_missing(tmp_path):
     (folder / "config.toml").unlink()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/doctor")
+        await type_line(app, pilot, "doctor")
         _, checks, unverified, last = messages(app)
         lines = [line.strip() for line in checks[1].splitlines()]
         assert f"FAIL  The workspace at {folder} is missing: config.toml" in lines
-        assert f'Fix: run /init "{folder}". It adds what is missing' in checks[1]
+        assert f'Fix: run init "{folder}". It adds what is missing' in checks[1]
         assert "FAIL  Config not checked" in lines
         assert "Fix: get the workspace check passing first." in lines
         assert shown(app, ".word.-fail") == ["FAIL", "FAIL"]
@@ -378,7 +392,7 @@ def test_doctor_with_config_toml_missing(tmp_path):
             "warning",
             "The unverified config values can't be listed until the config is fixed.",
         )
-        assert last == ("error", "2 checks failed. Fix them, then run /doctor again.")
+        assert last == ("error", "2 checks failed. Fix them, then run doctor again.")
 
     run(steps)
 
@@ -388,9 +402,9 @@ def test_status_line_with_config_toml_missing(tmp_path):
     (folder / "config.toml").unlink()
 
     async def steps(app, pilot):
-        expected = f"Workspace: {folder} · ✗ config.toml has a problem, run /doctor"
+        expected = f"Workspace: {folder} · ✗ config.toml has a problem, run doctor"
         assert status_text(app) == expected
-        await type_line(app, pilot, "/doctor")
+        await type_line(app, pilot, "doctor")
         assert status_text(app) == expected
 
     run(steps, size=(200, 30))
@@ -405,13 +419,13 @@ def test_doctor_shows_fix_lines_as_plain_text(tmp_path):
     )
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/doctor")
+        await type_line(app, pilot, "doctor")
         assert any(
             '"compounds" under [folders] in' in fix for fix in shown(app, ".fix")
         )
         assert messages(app)[-2] == ("success", "Every config value has been verified.")
         assert messages(app)[-1][1].startswith(
-            "1 check failed. Fix it, then run /doctor"
+            "1 check failed. Fix it, then run doctor"
         )
 
     run(steps)
@@ -436,10 +450,10 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
     )
 
     async def steps(app, pilot):
-        assert status_text(app) == "› No workspace yet. Type /init to create one."
+        assert status_text(app) == "› No workspace yet. Type init to create one."
 
         # A new folder: no question, the same words as syn init.
-        await type_line(app, pilot, f'/init "{folder}"')
+        await type_line(app, pilot, f'init "{folder}"')
         assert not answering(app)
         assert messages(app)[1:] == [
             ("success", f"Created the Synthase workspace at {folder}"),
@@ -464,10 +478,10 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
         before = config.read_text("utf-8")
 
         # Again, answering no: the question shows in the bar, the config is kept.
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         assert answering(app)
         assert bar_question(app) == question
-        assert app.query_one("#bar").border_title == " Answering /init · Esc cancels "
+        assert app.query_one("#bar").border_title == " Answering init · Esc cancels "
         await type_line(app, pilot, "no")
         assert not answering(app)
         assert messages(app)[-4][1] == f"{question} no"
@@ -480,7 +494,7 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
         assert list(folder.glob("config.toml.bak-*")) == []
 
         # Again, answering yes: the old config is kept as a .bak copy.
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         await type_line(app, pilot, "yes")
         backups = list(folder.glob("config.toml.bak-*"))
         assert len(backups) == 1
@@ -492,7 +506,7 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
 
         # Once more, cancelling with Esc: nothing is saved.
         pointer.write_text("somewhere else\n", encoding="utf-8")
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         await pilot.press("escape")
         await pilot.pause()
         assert not answering(app)
@@ -511,10 +525,10 @@ def test_init_answers_only_yes_or_y_as_yes(tmp_path):
 
     async def steps(app, pilot):
         for reply in ["", "n", "maybe", "yes please"]:
-            await type_line(app, pilot, f"/init {folder}")
+            await type_line(app, pilot, f"init {folder}")
             await type_line(app, pilot, reply)
         assert list(folder.glob("config.toml.bak-*")) == []
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         await type_line(app, pilot, " Y ")
         assert len(list(folder.glob("config.toml.bak-*"))) == 1
 
@@ -523,7 +537,7 @@ def test_init_answers_only_yes_or_y_as_yes(tmp_path):
 
 def test_init_with_no_path_uses_documents(tmp_path):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/init")
+        await type_line(app, pilot, "init")
         folder = (tmp_path / "Documents" / "Synthase-data").resolve()
         assert messages(app)[1] == (
             "success",
@@ -535,7 +549,7 @@ def test_init_with_no_path_uses_documents(tmp_path):
 
 def test_init_refusing_the_code_folder_is_an_error():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/init .")
+        await type_line(app, pilot, "init .")
         kind, text = messages(app)[-1]
         assert kind == "error"
         assert text.startswith("Synthase can't create the workspace there:")
@@ -549,7 +563,7 @@ def test_ctrl_c_cancels_a_question(tmp_path):
     main(["init", str(folder)])
 
     async def steps(app, pilot):
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert not answering(app)
@@ -563,12 +577,12 @@ def test_answers_are_not_kept_in_history_and_keys_wait(tmp_path):
     folder = invented_workspace(tmp_path, unverified=0)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, f"/init {folder}")
+        await type_line(app, pilot, f"init {folder}")
         app.query_one("#command").value = "/he"
         await pilot.press("tab", "up")
         assert app.query_one("#command").value == "/he"
         await type_line(app, pilot, "no")
-        assert app.history.lines == [f"/init {folder}"]
+        assert app.history.lines == [f"init {folder}"]
 
     run(steps)
 
@@ -578,7 +592,7 @@ def test_a_shared_question_list_explains_wrong_answers_and_skips(tmp_path):
     done = []
 
     async def steps(app, pilot):
-        app.ask("/compound add", add_flow(folder), done.append, "Nothing was added.")
+        app.ask("compound add", add_flow(folder), done.append, "Nothing was added.")
         await pilot.pause()
         assert messages(app)[-1] == (
             "normal",
@@ -620,7 +634,7 @@ def test_answers_with_markup_characters_show_as_typed(tmp_path):
     folder = invented_workspace(tmp_path, unverified=0)
 
     async def steps(app, pilot):
-        app.ask("/compound add", add_flow(folder), lambda answers: None, "x")
+        app.ask("compound add", add_flow(folder), lambda answers: None, "x")
         await pilot.pause()
         await type_line(app, pilot, "[b]$x[/b]")
         shown = str(app.query(".-answered .body").last().render())
@@ -641,7 +655,7 @@ def test_answered_questions_keep_values_in_brackets(tmp_path):
     )
 
     async def steps(app, pilot):
-        app.ask("/compound edit", flow, lambda answers: None, "x")
+        app.ask("compound edit", flow, lambda answers: None, "x")
         await pilot.pause()
         await type_line(app, pilot, "[Abc]")
         await type_line(app, pilot, "")
@@ -682,7 +696,7 @@ def test_compound_show_shows_the_card_for_any_form_of_id(tmp_path):
 
     async def steps(app, pilot):
         for typed in ("SYN-001", "syn-1", "1"):
-            await type_line(app, pilot, f"/compound show {typed}")
+            await type_line(app, pilot, f"compound show {typed}")
         cards = app.query(CardMessage)
         assert len(cards) == 3
         assert len({card.text for card in cards}) == 1
@@ -713,7 +727,7 @@ def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):
     printed = capsys.readouterr().out.splitlines()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound list")
+        await type_line(app, pilot, "compound list")
         table, summary = messages(app)[-2:]
         assert table[1].splitlines()[1:] == [
             "SYN-001  Test compound A  chalcone  planned  C2H6O  46.1",
@@ -722,7 +736,7 @@ def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):
         assert summary == ("normal", printed[3])
         assert summary[1] == "2 compounds (1 archived, hidden; add --all to see it)."
 
-        await type_line(app, pilot, "/compound list --class Chalcone --all")
+        await type_line(app, pilot, "compound list --class Chalcone --all")
         table, summary = messages(app)[-2:]
         assert [row.split()[0] for row in table[1].splitlines()[1:]] == [
             "SYN-001",
@@ -736,7 +750,7 @@ def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):
             "Test compound B (archived)",
         ]
 
-        await type_line(app, pilot, "/compound list --status purified")
+        await type_line(app, pilot, "compound list --status purified")
         assert messages(app)[-1] == ("normal", printed[8])
         assert printed[8] == "No compounds match (status: purified)."
 
@@ -747,7 +761,7 @@ def test_compound_history_shows_the_change_log_oldest_first(tmp_path):
     invented_register(tmp_path)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound history syn-2")
+        await type_line(app, pilot, "compound history syn-2")
         log = app.query(ChangeLog).last()
         assert log.title == "History of SYN-002: Test compound B"
         names = [name for _, name, _ in log.rows]
@@ -765,16 +779,16 @@ def test_compound_list_csv_asks_before_replacing(tmp_path):
     path = folder / "results" / "compounds.csv"
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "compound list --csv compounds.csv")
         assert messages(app)[-1] == ("success", f"Saved the table to {path}")
         path.write_text("an older table", encoding="utf-8")
 
-        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "compound list --csv compounds.csv")
         assert bar_question(app) == f"{path} already exists. Replace it? [y/N]"
         await pilot.press("escape")
         assert messages(app)[-1] == ("cancel", "Cancelled. The table was not saved.")
 
-        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "compound list --csv compounds.csv")
         await type_line(app, pilot, "n")
         assert messages(app)[-1] == (
             "normal",
@@ -782,7 +796,7 @@ def test_compound_list_csv_asks_before_replacing(tmp_path):
         )
         assert path.read_text(encoding="utf-8") == "an older table"
 
-        await type_line(app, pilot, "/compound list --csv compounds.csv")
+        await type_line(app, pilot, "compound list --csv compounds.csv")
         await type_line(app, pilot, "yes")
         assert messages(app)[-1] == ("success", f"Saved the table to {path}")
 
@@ -801,7 +815,7 @@ def test_compound_list_csv_path_in_quotes_keeps_backslashes(tmp_path):
     path = folder / "results" / "June tables" / "list.csv"
 
     async def steps(app, pilot):
-        await type_line(app, pilot, f'/compound list --csv "{path}"')
+        await type_line(app, pilot, f'compound list --csv "{path}"')
         assert messages(app)[-1] == ("success", f"Saved the table to {path}")
 
     run(steps)
@@ -815,36 +829,36 @@ def test_compound_errors_match_syn(tmp_path, capsys):
     errors = capsys.readouterr().err.splitlines()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound show 9")
+        await type_line(app, pilot, "compound show 9")
         assert messages(app)[-1] == (
             "error",
-            errors[0].replace('"syn compound list"', '"/compound list"'),
+            errors[0].replace('"syn compound list"', '"compound list"'),
         )
         assert messages(app)[-1][1] == (
-            'There\'s no compound SYN-009 in the register. Run "/compound list" '
+            'There\'s no compound SYN-009 in the register. Run "compound list" '
             "to see every ID."
         )
-        await type_line(app, pilot, "/compound history nine")
+        await type_line(app, pilot, "compound history nine")
         assert messages(app)[-1] == ("error", errors[1])
-        await type_line(app, pilot, "/compound list --status nonsense")
+        await type_line(app, pilot, "compound list --status nonsense")
         assert messages(app)[-1] == ("error", errors[2])
 
-        await type_line(app, pilot, "/compound show")
+        await type_line(app, pilot, "compound show")
         assert messages(app)[-2:] == [
             ("error", "the following arguments are required: ID"),
-            ("hint", "Type /help compound show to see how it's used."),
+            ("hint", "Type help compound show to see how it's used."),
         ]
-        await type_line(app, pilot, "/compound list --csv")
+        await type_line(app, pilot, "compound list --csv")
         assert messages(app)[-2][1] == "argument --csv: expected one argument"
-        await type_line(app, pilot, '/compound list --csv "open')
+        await type_line(app, pilot, 'compound list --csv "open')
         assert messages(app)[-1] == ("error", "a quote isn't closed")
 
-        await type_line(app, pilot, "/compound")
+        await type_line(app, pilot, "compound")
         assert messages(app)[-1] == (
             "hint",
             SUBCOMMANDS_HINT.format(name="compound", first="compound add"),
         )
-        await type_line(app, pilot, "/compound frob")
+        await type_line(app, pilot, "compound frob")
         assert messages(app)[-1] == ("error", UNKNOWN)
         assert app.is_running
 
@@ -855,10 +869,10 @@ def test_an_empty_register_says_how_to_add_one(tmp_path):
     doctor_workspace(tmp_path, unverified=13)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound list")
+        await type_line(app, pilot, "compound list")
         assert messages(app)[-1] == (
             "normal",
-            'The register is empty. Add a compound with "/compound add".',
+            'The register is empty. Add a compound with "compound add".',
         )
 
     run(steps)
@@ -866,10 +880,10 @@ def test_an_empty_register_says_how_to_add_one(tmp_path):
 
 def test_compound_without_a_workspace_points_to_init():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound list")
+        await type_line(app, pilot, "compound list")
         assert messages(app)[-1] == (
             "error",
-            'There is no workspace yet. Run "/init" to create one.',
+            'There is no workspace yet. Run "init" to create one.',
         )
 
     run(steps)
@@ -886,10 +900,10 @@ def test_compound_add_by_answering_the_questions(tmp_path):
     folder = invented_workspace(tmp_path, unverified=0)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound add")
+        await type_line(app, pilot, "compound add")
         assert answering(app)
         assert app.query_one("#bar").border_title == (
-            " Answering /compound add · Esc cancels "
+            " Answering compound add · Esc cancels "
         )
         await answer_each(
             app,
@@ -925,7 +939,7 @@ def test_compound_add_by_answering_the_questions(tmp_path):
         assert messages(app)[-3:] == [
             ("success", "Added SYN-001: Test compound A"),
             ("normal", "\n".join(section_lines(field_sections(compound, folder)))),
-            ("hint", 'Add more details later with "/compound edit SYN-001".'),
+            ("hint", 'Add more details later with "compound edit SYN-001".'),
         ]
         assert "melting point" in shown(app, ".-card .name")
 
@@ -950,7 +964,7 @@ def test_compound_add_cancelled_adds_nothing(tmp_path):
     folder = invented_workspace(tmp_path, unverified=0)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound add")
+        await type_line(app, pilot, "compound add")
         await type_line(app, pilot, "Test compound A")
         await pilot.press("escape")
         await pilot.pause()
@@ -966,17 +980,17 @@ def test_compound_add_with_options_asks_nothing_and_matches_syn(tmp_path, capsys
 
     async def steps(app, pilot):
         await type_line(
-            app, pilot, '/compound add --label "Test compound B" --smiles CCO'
+            app, pilot, 'compound add --label "Test compound B" --smiles CCO'
         )
         assert not answering(app)
         added.extend(text for _, text in messages(app)[-3:])
-        await type_line(app, pilot, "/compound add --smiles CCO")
+        await type_line(app, pilot, "compound add --smiles CCO")
         assert messages(app)[-1] == (
             "error",
-            'Give the label with --label, or run "/compound add" with no flags '
+            'Give the label with --label, or run "compound add" with no flags '
             "to be asked for each field.",
         )
-        await type_line(app, pilot, "/compound add --label x --mp 999-1")
+        await type_line(app, pilot, "compound add --label x --mp 999-1")
         assert messages(app)[-1][0] == "error"
 
     run(steps)
@@ -985,7 +999,7 @@ def test_compound_add_with_options_asks_nothing_and_matches_syn(tmp_path, capsys
     expected = (
         printed.replace("SYN-002", "SYN-001")
         .replace("Test compound C", "Test compound B")
-        .replace('"syn compound edit', '"/compound edit')
+        .replace('"syn compound edit', '"compound edit')
     )
     assert "\n".join(added) == expected
     assert [c.label for c in list_compounds(folder)] == [
@@ -999,9 +1013,9 @@ def test_compound_edit_by_answering_asks_before_each_change(tmp_path):
     add_compound(folder, "Test compound A", "chalcone", smiles="CCO")
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound edit syn-1")
+        await type_line(app, pilot, "compound edit syn-1")
         assert app.query_one("#bar").border_title == (
-            " Answering /compound edit · Esc cancels "
+            " Answering compound edit · Esc cancels "
         )
         assert messages(app)[-1] == (
             "normal",
@@ -1061,11 +1075,11 @@ def test_compound_edit_with_options_asks_only_confirmations(tmp_path):
 
     async def steps(app, pilot):
         # Filling a blank value asks nothing.
-        await type_line(app, pilot, "/compound edit SYN-001 --mp 455-457")
+        await type_line(app, pilot, "compound edit SYN-001 --mp 455-457")
         assert not answering(app)
         assert messages(app)[-2][1] == "Saved 1 change to SYN-001: Test compound A"
         # Changing a set one asks; Esc cancels and changes nothing.
-        await type_line(app, pilot, "/compound edit SYN-001 --mp 450-452 --notes x")
+        await type_line(app, pilot, "compound edit SYN-001 --mp 450-452 --notes x")
         assert bar_question(app) == (
             'Change the melting point from "455–457 K" to "450–452 K"? [y/N]'
         )
@@ -1073,16 +1087,16 @@ def test_compound_edit_with_options_asks_only_confirmations(tmp_path):
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
         # A no keeps it, and with nothing else to change nothing is saved.
-        await type_line(app, pilot, "/compound edit 1 --smiles -")
+        await type_line(app, pilot, "compound edit 1 --smiles -")
         await answer_each(app, pilot, [('Clear the SMILES ("CCO")? [y/N]', "")])
         assert messages(app)[-2:] == [
             ("normal", 'Kept the SMILES as "CCO".'),
             ("normal", "Nothing was changed."),
         ]
-        await type_line(app, pilot, "/compound edit 1 --rf 0.4")
+        await type_line(app, pilot, "compound edit 1 --rf 0.4")
         assert messages(app)[-1][1].startswith("An Rf value needs the solvent system")
-        await type_line(app, pilot, "/compound edit 9 --notes x")
-        assert messages(app)[-1][1].endswith('Run "/compound list" to see every ID.')
+        await type_line(app, pilot, "compound edit 9 --notes x")
+        assert messages(app)[-1][1].endswith('Run "compound list" to see every ID.')
         assert not answering(app)
 
     run(steps)
@@ -1097,36 +1111,36 @@ def test_compound_archive_asks_first_and_restore_does_not(tmp_path):
     add_compound(folder, "Test compound A")
     question = (
         "Archive SYN-001 (Test compound A)? It stays in the register but is "
-        'hidden from "/compound list". [y/N]'
+        'hidden from "compound list". [y/N]'
     )
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound archive 1")
+        await type_line(app, pilot, "compound archive 1")
         assert app.query_one("#bar").border_title == (
-            " Answering /compound archive · Esc cancels "
+            " Answering compound archive · Esc cancels "
         )
         await answer_each(app, pilot, [(question, "")])
         assert messages(app)[-1] == ("normal", "Kept SYN-001 as it was.")
-        await type_line(app, pilot, "/compound archive 1")
+        await type_line(app, pilot, "compound archive 1")
         await pilot.press("escape")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
         assert not get_compound(folder, "1").archived
-        await type_line(app, pilot, "/compound archive SYN-001")
+        await type_line(app, pilot, "compound archive SYN-001")
         await answer_each(app, pilot, [(question, "y")])
         assert messages(app)[-1] == (
             "success",
-            'Archived SYN-001: Test compound A. Undo with "/compound restore SYN-001".',
+            'Archived SYN-001: Test compound A. Undo with "compound restore SYN-001".',
         )
-        await type_line(app, pilot, "/compound archive 1")
+        await type_line(app, pilot, "compound archive 1")
         assert messages(app)[-1] == ("error", "SYN-001 is already archived.")
-        await type_line(app, pilot, "/compound restore 1")
+        await type_line(app, pilot, "compound restore 1")
         assert not answering(app)
         assert messages(app)[-1] == (
             "success",
-            'Restored SYN-001: Test compound A. It shows in "/compound list" again.',
+            'Restored SYN-001: Test compound A. It shows in "compound list" again.',
         )
-        await type_line(app, pilot, "/compound restore 1")
+        await type_line(app, pilot, "compound restore 1")
         assert messages(app)[-1] == (
             "error",
             "SYN-001 isn't archived, so there's nothing to restore.",
@@ -1146,7 +1160,7 @@ def test_compound_batch_by_answering_and_with_options(tmp_path):
     today = date.today().strftime("%d/%m/%Y")
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound batch 1")
+        await type_line(app, pilot, "compound batch 1")
         assert messages(app)[-1] == (
             "normal",
             "New batch of SYN-001: Test compound A. Press Enter for today's date, "
@@ -1178,27 +1192,27 @@ def test_compound_batch_by_answering_and_with_options(tmp_path):
             (
                 "hint",
                 'SYN-001 is still "planned". Change it with '
-                '"/compound edit SYN-001 --status synthesised".',
+                '"compound edit SYN-001 --status synthesised".',
             ),
         ]
         assert shown(app, ".rows.-batches .name")[-3:] == ["1", today, "-"]
-        await type_line(app, pilot, "/compound batch 1")
+        await type_line(app, pilot, "compound batch 1")
         await pilot.press("escape")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was added.")
-        await type_line(app, pilot, "/compound edit 1 --status synthesised")
+        await type_line(app, pilot, "compound edit 1 --status synthesised")
         await type_line(app, pilot, "y")
         await type_line(
             app,
             pilot,
-            '/compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
+            'compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
         )
         assert not answering(app)
         assert messages(app)[-2:] == [
             ("success", "Added batch 2 to SYN-001: Test compound A"),
             ("normal", "2  18/10/2026  152 mg  64.2%"),
         ]
-        await type_line(app, pilot, "/compound batch 1 --mass 152")
+        await type_line(app, pilot, "compound batch 1 --mass 152")
         assert messages(app)[-1] == (
             "error",
             "Give the unit as well, mg or g, such as 152 mg.",
@@ -1218,7 +1232,7 @@ def test_compound_edit_batch_asks_before_each_change(tmp_path):
     add_batch(folder, "1", date(2026, 10, 18), 0.152, 64.2)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound edit-batch 1 1")
+        await type_line(app, pilot, "compound edit-batch 1 1")
         assert messages(app)[-1] == (
             "normal",
             "Editing batch 1 of SYN-001: Test compound A. Press Enter to keep a "
@@ -1252,25 +1266,25 @@ def test_compound_edit_batch_asks_before_each_change(tmp_path):
             ("normal", "1  18/10/2026  125 mg  -"),
         ]
         # Filling a blank value asks nothing.
-        await type_line(app, pilot, "/compound edit-batch SYN-001 1 --yield 50")
+        await type_line(app, pilot, "compound edit-batch SYN-001 1 --yield 50")
         assert not answering(app)
         assert messages(app)[-2][1] == (
             "Saved 1 change to batch 1 of SYN-001: Test compound A"
         )
         # Clearing both is refused before anything is asked.
-        await type_line(app, pilot, "/compound edit-batch 1 1 --mass - --yield -")
+        await type_line(app, pilot, "compound edit-batch 1 1 --mass - --yield -")
         assert not answering(app)
         assert messages(app)[-1] == (
             "error",
             "A batch needs its mass made, its yield or both.",
         )
-        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 1")
+        await type_line(app, pilot, "compound edit-batch 1 1 --mass 1")
         assert messages(app)[-1][0] == "error"
-        await type_line(app, pilot, "/compound edit-batch 1 1 --mass 99mg")
+        await type_line(app, pilot, "compound edit-batch 1 1 --mass 99mg")
         await pilot.press("ctrl+c")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
-        await type_line(app, pilot, "/compound edit-batch 1 4 --mass 99mg")
+        await type_line(app, pilot, "compound edit-batch 1 4 --mass 99mg")
         assert messages(app)[-1] == (
             "error",
             "SYN-001 has no batch 4. Its batches are 1.",
@@ -1297,21 +1311,21 @@ def test_compound_remove_batch_asks_first_and_keeps_the_numbers(tmp_path):
     )
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await type_line(app, pilot, "compound remove-batch 1 2")
         await answer_each(app, pilot, [(question, "no")])
         assert messages(app)[-1] == ("normal", "Kept batch 2 of SYN-001 as it was.")
-        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await type_line(app, pilot, "compound remove-batch 1 2")
         await answer_each(app, pilot, [(question, "y")])
         assert messages(app)[-1] == (
             "success",
             "Removed batch 2 from SYN-001: Test compound A. "
-            'It stays in "/compound history SYN-001".',
+            'It stays in "compound history SYN-001".',
         )
-        await type_line(app, pilot, "/compound remove-batch 1 2")
+        await type_line(app, pilot, "compound remove-batch 1 2")
         assert messages(app)[-1][1].startswith("Batch 2 of SYN-001 was removed on ")
-        await type_line(app, pilot, "/compound batch 1 --mass 99mg")
+        await type_line(app, pilot, "compound batch 1 --mass 99mg")
         assert messages(app)[-2][1] == "Added batch 3 to SYN-001: Test compound A"
-        await type_line(app, pilot, "/compound show 1")
+        await type_line(app, pilot, "compound show 1")
         assert shown(app, "CardMessage .rows.-batches .name")[::3] == ["1", "3"]
 
     run(steps)
@@ -1332,26 +1346,26 @@ def test_compound_spectrum_links_inside_the_workspace_only(tmp_path, monkeypatch
 
     async def steps(app, pilot):
         await type_line(
-            app, pilot, '/compound spectrum 1 "spectra/SYN-001 IR.csv" --kind ir'
+            app, pilot, 'compound spectrum 1 "spectra/SYN-001 IR.csv" --kind ir'
         )
         assert not answering(app)
         assert messages(app)[-2:] == [
             ("success", "Linked to SYN-001: Test compound A"),
             ("normal", f"IR  {ir}  (added {today})"),
         ]
-        await type_line(app, pilot, f'/compound spectrum 1 "{outside}"')
+        await type_line(app, pilot, f'compound spectrum 1 "{outside}"')
         assert messages(app)[-1] == (
             "error",
             f"Spectra files must be inside the workspace ({folder}). Copy it in, "
             'for example into a "spectra" folder, then link it.',
         )
-        await type_line(app, pilot, "/compound spectrum 1 --kind IR")
+        await type_line(app, pilot, "compound spectrum 1 --kind IR")
         assert messages(app)[-1] == (
             "error",
-            'Give the file to link, as in "/compound spectrum SYN-001 '
+            'Give the file to link, as in "compound spectrum SYN-001 '
             'spectra\\IR.csv --kind IR".',
         )
-        await type_line(app, pilot, "/compound spectrum 1")
+        await type_line(app, pilot, "compound spectrum 1")
         assert messages(app)[-1] == (
             "normal",
             "Link a spectra file to SYN-001: Test compound A.",
@@ -1364,7 +1378,7 @@ def test_compound_spectrum_links_inside_the_workspace_only(tmp_path, monkeypatch
         await pilot.press("escape")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was linked.")
-        await type_line(app, pilot, "/compound spectrum 1")
+        await type_line(app, pilot, "compound spectrum 1")
         await answer_each(
             app,
             pilot,
@@ -1396,7 +1410,7 @@ def test_compound_unlink_lists_the_files_and_asks_first(tmp_path):
     uv = os.path.join("spectra", "UV.csv")
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/compound unlink 1")
+        await type_line(app, pilot, "compound unlink 1")
         assert messages(app)[-3:] == [
             ("normal", "Spectra linked to SYN-001: Test compound A"),
             ("normal", f"  1  IR  {ir}  (added {today})"),
@@ -1420,11 +1434,11 @@ def test_compound_unlink_lists_the_files_and_asks_first(tmp_path):
             ],
         )
         assert messages(app)[-1] == ("normal", f"Kept the link to IR {ir}.")
-        await type_line(app, pilot, "/compound unlink 1 SPECTRA\\uv.csv")
+        await type_line(app, pilot, "compound unlink 1 SPECTRA\\uv.csv")
         await pilot.press("escape")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
-        await type_line(app, pilot, "/compound unlink 1 SPECTRA\\uv.csv")
+        await type_line(app, pilot, "compound unlink 1 SPECTRA\\uv.csv")
         await answer_each(
             app,
             pilot,
@@ -1434,7 +1448,7 @@ def test_compound_unlink_lists_the_files_and_asks_first(tmp_path):
             "success",
             f"Unlinked {uv} from SYN-001: Test compound A.",
         )
-        await type_line(app, pilot, "/compound unlink 1 nothing.csv")
+        await type_line(app, pilot, "compound unlink 1 nothing.csv")
         assert messages(app)[-1] == (
             "error",
             f'"nothing.csv" isn\'t linked to SYN-001. Its linked files are: {ir}.',
@@ -1446,9 +1460,9 @@ def test_compound_unlink_lists_the_files_and_asks_first(tmp_path):
 
 def test_help_names_the_apps_own_commands():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help compound archive")
+        await type_line(app, pilot, "help compound archive")
         assert (
-            'from "/compound list". Nothing is deleted: "/compound show"'
+            'from "compound list". Nothing is deleted: "compound show"'
             in (messages(app)[-1][1])
         )
         assert '"syn ' not in messages(app)[-1][1]
@@ -1468,35 +1482,35 @@ def test_the_rest_of_the_register_from_archive_to_unlink(tmp_path):
 
     async def steps(app, pilot):
         for typed in (
-            "/compound archive 1",
+            "compound archive 1",
             "y",
-            "/compound restore 1",
-            '/compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
-            "/compound batch 1",
+            "compound restore 1",
+            'compound batch 1 --date 2026-10-18 --mass "152 mg" --yield 64.2',
+            "compound batch 1",
             "18/10/2026",
             "140 mg",
             "50.0",
-            '/compound edit-batch 1 1 --mass "125 mg"',
+            'compound edit-batch 1 1 --mass "125 mg"',
             "y",
-            "/compound remove-batch 1 2",
+            "compound remove-batch 1 2",
             "y",
-            '/compound spectrum 1 "spectra/invented IR.csv" --kind IR',
-            "/compound unlink 1",
+            'compound spectrum 1 "spectra/invented IR.csv" --kind IR',
+            "compound unlink 1",
             "1",
             "y",
-            "/compound show 1",
-            "/compound history 1",
+            "compound show 1",
+            "compound history 1",
         ):
             await type_line(app, pilot, typed)
         assert not answering(app)
         assert [text for kind, text in messages(app) if kind == "success"] == [
-            'Archived SYN-001: Test compound A. Undo with "/compound restore SYN-001".',
-            'Restored SYN-001: Test compound A. It shows in "/compound list" again.',
+            'Archived SYN-001: Test compound A. Undo with "compound restore SYN-001".',
+            'Restored SYN-001: Test compound A. It shows in "compound list" again.',
             "Added batch 1 to SYN-001: Test compound A",
             "Added batch 2 to SYN-001: Test compound A",
             "Saved 1 change to batch 1 of SYN-001: Test compound A",
             "Removed batch 2 from SYN-001: Test compound A. "
-            'It stays in "/compound history SYN-001".',
+            'It stays in "compound history SYN-001".',
             "Linked to SYN-001: Test compound A",
             f"Unlinked IR {ir} from SYN-001: Test compound A.",
         ]
@@ -1531,9 +1545,9 @@ def test_config_shows_every_value_the_count_and_the_folders(invented_config, cap
     folder_line = next(line for line in printed if "Compounds folder" in line)
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config")
+        await type_line(app, pilot, "config")
         echo, table, count, folders = messages(app)
-        assert echo == ("echo", "/config")
+        assert echo == ("echo", "config")
         assert table == (
             "normal",
             "\n".join(
@@ -1560,7 +1574,7 @@ def test_config_shows_every_value_the_count_and_the_folders(invented_config, cap
 
 def test_config_wraps_inside_80_columns(invented_config):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config")
+        await type_line(app, pilot, "config")
         table = app.query_one(app_module.ConfigTable)
         assert table.size.width < 80
         assert table.size.height > len(table.text.splitlines())
@@ -1574,7 +1588,7 @@ def test_config_says_when_every_value_is_verified(invented_config):
     path.write_text(text.replace("false", "true"), encoding="utf-8")
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config")
+        await type_line(app, pilot, "config")
         assert messages(app)[2] == ("success", "All 4 values are verified.")
         assert shown(app, ".verified.-no") == []
 
@@ -1583,7 +1597,7 @@ def test_config_says_when_every_value_is_verified(invented_config):
 
 def test_config_name_shows_one_value_in_full(invented_config):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config [TEST.Gamma]")
+        await type_line(app, pilot, "config [TEST.Gamma]")
         _, entry, warning = messages(app)
         assert entry == (
             "normal",
@@ -1597,7 +1611,7 @@ def test_config_name_shows_one_value_in_full(invented_config):
             "the literature yet. Treat results that use it as provisional.",
         )
         # A verified value has no warning after it.
-        await type_line(app, pilot, "/config test.alpha")
+        await type_line(app, pilot, "config test.alpha")
         assert messages(app)[-1][1].endswith("Verified  ✓ yes")
 
     run(steps)
@@ -1605,19 +1619,19 @@ def test_config_name_shows_one_value_in_full(invented_config):
 
 def test_config_name_that_isnt_there_or_more_than_one(invented_config):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config test.zeta")
+        await type_line(app, pilot, "config test.zeta")
         assert messages(app)[-2:] == [
             (
                 "error",
                 "The config has no entry called [test.zeta]. Check the spelling, "
                 "or compare your config with the template.",
             ),
-            ("hint", "Type /config to see every entry."),
+            ("hint", "Type config to see every entry."),
         ]
-        await type_line(app, pilot, "/config test.alpha test.beta")
+        await type_line(app, pilot, "config test.alpha test.beta")
         assert messages(app)[-1] == (
             "error",
-            "/config takes one entry name, e.g. /config mic.growth_threshold.",
+            "config takes one entry name, e.g. config mic.growth_threshold.",
         )
 
     run(steps)
@@ -1625,9 +1639,9 @@ def test_config_name_that_isnt_there_or_more_than_one(invented_config):
 
 def test_config_without_a_workspace_says_what_doctor_says():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config")
+        await type_line(app, pilot, "config")
         assert messages(app)[1:] == [
-            ("error", 'There is no workspace yet. Run "/init" to create one.')
+            ("error", 'There is no workspace yet. Run "init" to create one.')
         ]
 
     run(steps)
@@ -1637,12 +1651,12 @@ def test_config_with_a_folder_missing_gives_doctors_fix(invented_config):
     (invented_config / "results").rmdir()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config")
+        await type_line(app, pilot, "config")
         assert messages(app)[1:] == [
             ("error", f"The workspace at {invented_config} is missing: results"),
             (
                 "hint",
-                f'Fix: run /init "{invented_config}". It adds what is missing and '
+                f'Fix: run init "{invented_config}". It adds what is missing and '
                 "never touches your files. If it asks about config.toml, answer "
                 "no to keep yours.",
             ),
@@ -1659,7 +1673,7 @@ def test_config_that_is_broken_gives_doctors_error(invented_config, capsys):
     printed = capsys.readouterr().out
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config test.alpha")
+        await type_line(app, pilot, "config test.alpha")
         kind, error = messages(app)[-1]
         assert kind == "error"
         assert error.startswith(f"Your config file has a problem: {path}")
@@ -1677,7 +1691,7 @@ def test_config_set_asks_then_changes_the_value_and_backs_up_once(invented_confi
     before = path.read_bytes()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config set test.alpha 3")
+        await type_line(app, pilot, "config set test.alpha 3")
         assert answering(app)
         assert bar_question(app) == (
             "Change alpha limit from 2.5 mg to 3 mg? It will be marked unverified "
@@ -1695,14 +1709,14 @@ def test_config_set_asks_then_changes_the_value_and_backs_up_once(invented_confi
         ]
         assert status_text(app).endswith("? 3 config values unverified")
         # The second change in the session makes no second backup.
-        await type_line(app, pilot, "/config set test.alpha 4")
+        await type_line(app, pilot, "config set test.alpha 4")
         await type_line(app, pilot, "y")
         assert messages(app)[-1] == (
             "success",
             "Changed alpha limit to 4 mg. It is now unverified.",
         )
         assert config_backups(invented_config) == backups
-        await type_line(app, pilot, "/config test.alpha")
+        await type_line(app, pilot, "config test.alpha")
         assert "Value  4" in messages(app)[-2][1]
 
     run(steps)
@@ -1713,10 +1727,10 @@ def test_config_set_answered_no_or_cancelled_changes_nothing(invented_config):
     before = path.read_bytes()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config set test.alpha 3")
+        await type_line(app, pilot, "config set test.alpha 3")
         await type_line(app, pilot, "")
         assert messages(app)[-1] == ("cancel", "Nothing was changed.")
-        await type_line(app, pilot, "/config set test.alpha 3")
+        await type_line(app, pilot, "config set test.alpha 3")
         await pilot.press("escape")
         await pilot.pause()
         assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
@@ -1732,14 +1746,14 @@ def test_config_set_refuses_a_value_of_the_wrong_kind(invented_config):
     before = path.read_bytes()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config set test.beta 4 2")
+        await type_line(app, pilot, "config set test.beta 4 2")
         assert not answering(app)
         assert messages(app)[-1] == (
             "error",
             "That value can't be used for [test.beta]: a range must go from low "
             "to high.",
         )
-        await type_line(app, pilot, "/config set test.alpha 2.5")
+        await type_line(app, pilot, "config set test.alpha 2.5")
         assert messages(app)[-1] == ("success", "alpha limit is already 2.5 mg.")
 
     run(steps)
@@ -1748,22 +1762,21 @@ def test_config_set_refuses_a_value_of_the_wrong_kind(invented_config):
 
 def test_config_source_then_verify(invented_config):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config verify test.delta")
+        await type_line(app, pilot, "config verify test.delta")
         assert messages(app)[-1] == (
             "error",
-            "Set its source first: /config source test.delta <reference>.",
+            "Set its source first: config source test.delta <reference>.",
         )
         # An unverified value's source is saved without a question.
-        await type_line(app, pilot, "/config source test.delta Invented Tables, p. 9")
+        await type_line(app, pilot, "config source test.delta Invented Tables, p. 9")
         assert not answering(app)
         assert messages(app)[-3][1] == "Changed the source of delta unit."
         assert messages(app)[-2][0] == "hint"
         assert messages(app)[-1] == (
             "hint",
-            "Type /config verify test.delta once you have checked the value "
-            "against it.",
+            "Type config verify test.delta once you have checked the value against it.",
         )
-        await type_line(app, pilot, "/config verify [TEST.Delta]")
+        await type_line(app, pilot, "config verify [TEST.Delta]")
         assert bar_question(app) == (
             'Mark delta unit (mL) as checked against "Invented Tables, p. 9"? '
             "Type yes to mark it verified [no]:"
@@ -1771,7 +1784,7 @@ def test_config_source_then_verify(invented_config):
         await type_line(app, pilot, "yes")
         assert messages(app)[-1] == ("success", "Marked delta unit (mL) as verified.")
         assert status_text(app).endswith("? 1 config value unverified")
-        await type_line(app, pilot, "/config verify test.delta")
+        await type_line(app, pilot, "config verify test.delta")
         assert messages(app)[-1] == ("success", "delta unit is already verified.")
 
     run(steps)
@@ -1779,7 +1792,7 @@ def test_config_source_then_verify(invented_config):
 
 def test_config_source_of_a_verified_value_asks_first(invented_config):
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config source test.alpha Invented Atlas")
+        await type_line(app, pilot, "config source test.alpha Invented Atlas")
         assert bar_question(app).startswith(
             'alpha limit is verified. Change its source to "Invented Atlas"? It '
             "will be marked unverified until you check it again."
@@ -1798,19 +1811,19 @@ def test_config_folder_sets_and_clears_a_folder(invented_config):
     other.mkdir()
 
     async def steps(app, pilot):
-        await type_line(app, pilot, f'/config folder compounds "{other}"')
+        await type_line(app, pilot, f'config folder compounds "{other}"')
         assert not answering(app)
         done, backup, folder = messages(app)[-3:]
         assert done == ("success", f"Tables for compounds will be saved in {other}.")
         assert backup[0] == "hint"
         assert folder[1] == f"ok    Compounds folder: {other}"
-        await type_line(app, pilot, '/config folder compounds ""')
+        await type_line(app, pilot, 'config folder compounds ""')
         assert messages(app)[-2] == (
             "success",
             "Cleared the compounds folder, so its tables are saved in the "
             "workspace's results folder.",
         )
-        await type_line(app, pilot, "/config folder plates D:/Lab")
+        await type_line(app, pilot, "config folder plates D:/Lab")
         assert messages(app)[-1] == (
             "error",
             "There's no folder setting called 'plates'. The settings are: compounds.",
@@ -1828,7 +1841,7 @@ def test_config_copies_an_entry_only_in_the_template_first(invented_config):
     path.write_text(text[:start] + text[text.index("[folders]") :], "utf-8")
 
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config set test.delta µL")
+        await type_line(app, pilot, "config set test.delta µL")
         assert messages(app)[-1] == (
             "hint",
             "[test.delta] isn't in config.toml yet, so it will be copied from the "
@@ -1844,33 +1857,33 @@ def test_config_edits_typed_without_enough_words(invented_config):
     async def steps(app, pilot):
         for typed, expected in [
             (
-                "/config set",
-                "/config set takes an entry name and a value, e.g. /config set "
+                "config set",
+                "config set takes an entry name and a value, e.g. config set "
                 "mic.growth_threshold 0.1.",
             ),
             (
-                "/config set test.alpha",
-                "/config set takes an entry name and a value, e.g. /config set "
+                "config set test.alpha",
+                "config set takes an entry name and a value, e.g. config set "
                 "mic.growth_threshold 0.1.",
             ),
             (
-                "/config source test.alpha",
-                "/config source takes an entry name and the source, e.g. /config "
+                "config source test.alpha",
+                "config source takes an entry name and the source, e.g. config "
                 "source mic.growth_threshold <reference>.",
             ),
             (
-                "/config verify",
-                "/config verify takes one entry name, e.g. /config verify "
+                "config verify",
+                "config verify takes one entry name, e.g. config verify "
                 "mic.growth_threshold.",
             ),
             (
-                "/config verify test.alpha test.beta",
-                "/config verify takes one entry name, e.g. /config verify "
+                "config verify test.alpha test.beta",
+                "config verify takes one entry name, e.g. config verify "
                 "mic.growth_threshold.",
             ),
             (
-                "/config folder compounds",
-                "/config folder takes a folder setting and a folder, e.g. /config "
+                "config folder compounds",
+                "config folder takes a folder setting and a folder, e.g. config "
                 'folder compounds D:\\Lab\\Compound tables, or "" to clear it.',
             ),
         ]:
@@ -1883,9 +1896,9 @@ def test_config_edits_typed_without_enough_words(invented_config):
 
 def test_config_edits_without_a_workspace_say_what_doctor_says():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/config set mic.growth_threshold 0.2")
+        await type_line(app, pilot, "config set mic.growth_threshold 0.2")
         assert messages(app)[1:] == [
-            ("error", 'There is no workspace yet. Run "/init" to create one.')
+            ("error", 'There is no workspace yet. Run "init" to create one.')
         ]
 
     run(steps)
@@ -1893,13 +1906,13 @@ def test_config_edits_without_a_workspace_say_what_doctor_says():
 
 def test_help_config_lists_the_ways_to_change_a_setting():
     async def steps(app, pilot):
-        await type_line(app, pilot, "/help config")
+        await type_line(app, pilot, "help config")
         text = messages(app)[-1][1]
         for line in [
-            "/config set NAME VALUE  change a value; it is marked unverified again",
-            "/config source NAME TEXT  set where a value comes from",
-            "/config verify NAME  mark a value as checked against its source",
-            "/config folder AREA PATH  "
+            "config set NAME VALUE  change a value; it is marked unverified again",
+            "config source NAME TEXT  set where a value comes from",
+            "config verify NAME  mark a value as checked against its source",
+            "config folder AREA PATH  "
             'set the folder an area\'s tables are saved in; "" clears it',
         ]:
             assert line in text
@@ -1915,9 +1928,9 @@ def test_the_readme_names_only_real_commands_and_keys():
     text = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
     section = text.split("## Using the app")[1].split("\n## ")[0]
     root = command_list()
-    for typed in ("/doctor", "/help", "/help compound", "/quit", "/compound"):
+    for typed in ("doctor", "help", "help compound", "quit", "compound"):
         assert find(typed, root), typed
-    assert "`/help compound`" in section and "`/quit`" in section
+    assert "`help compound`" in section and "`quit`" in section
     keys = {binding.key for binding in SynthaseApp.BINDINGS}
     assert {"up", "down", "tab", "escape", "ctrl+c", "pageup", "pagedown"} <= keys
     assert "Ctrl+Q" in section
