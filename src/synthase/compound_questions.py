@@ -81,27 +81,38 @@ class Question:
     brackets after ``text``. ``check`` turns the typed text, given the answers
     so far, into the answer, or raises CompoundError saying what is wrong.
     ``skippable`` says whether Enter is accepted. A ``yes_no`` question is a
-    [y/N] question: only yes or y counts as yes. ``asked`` says, from the
-    earlier answers, whether the question is asked at all. ``kept`` is the
-    line shown when a [y/N] question is answered anything but yes.
+    [y/N] question: only yes or y counts as yes, unless ``default_yes`` makes
+    it a [Y/n] question. ``asked`` says, from the earlier answers, whether the
+    question is asked at all. ``kept`` is the line shown when a [y/N] question
+    is answered anything but yes. ``text`` and ``current`` can instead be
+    worked out from the earlier answers. ``shown`` gives the text to show
+    after a good answer, e.g. a preview of the file just chosen.
     """
 
     key: str
-    text: str
+    text: str | Callable[[Answers], str]
     check: Callable[[str, Answers], object]
-    current: str | None = None
+    current: str | None | Callable[[Answers], str | None] = None
     skippable: bool = True
     yes_no: bool = False
     asked: Callable[[Answers], bool] = always
     kept: str | None = None
+    default_yes: bool = False
+    shown: Callable[[Answers], str | None] | None = None
 
     @property
     def prompt(self) -> str:
         """The question exactly as shown, ready for the answer to follow."""
+        return self.prompt_after({})
+
+    def prompt_after(self, answers: Answers) -> str:
+        """The question as shown once ``answers`` are given."""
+        text = self.text(answers) if callable(self.text) else self.text
+        current = self.current(answers) if callable(self.current) else self.current
         if self.yes_no:
-            return f"{self.text} [y/N] "
-        shown = "" if self.current is None else f" [{self.current}]"
-        return f"{self.text}{shown}: "
+            return f"{text} [{'Y/n' if self.default_yes else 'y/N'}] "
+        shown = "" if current is None else f" [{current}]"
+        return f"{text}{shown}: "
 
     def answer(self, text: str, answers: Answers) -> object:
         """The answer ``text`` gives, or CompoundError saying what is wrong."""

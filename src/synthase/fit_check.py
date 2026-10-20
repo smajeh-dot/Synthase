@@ -206,6 +206,19 @@ def choose_columns(table: Table, x: str | None, y: str | None) -> tuple[int, int
     return x_index, y_index
 
 
+def shares_x(table: Table, x_index: int, y_index: int) -> bool:
+    """Whether any x value has more than one y value, among the numeric points."""
+    seen: set[float] = set()
+    for _, cells in table.rows:
+        x, y = read_number(cells[x_index]), read_number(cells[y_index])
+        if x is None or y is None:
+            continue
+        if x in seen:
+            return True
+        seen.add(x)
+    return False
+
+
 def thresholds(config: Config) -> dict[str, ConfigValue]:
     """The four fit values, each checked to be a number."""
     values = {}

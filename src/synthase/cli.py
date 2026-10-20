@@ -193,7 +193,8 @@ FIT_CHECK_HELP = (
     "it: enough points, enough different x values, numbers in every cell, spread "
     "across the range, suspect repeats and units. Nothing is fitted or saved, and "
     "no point is removed. The file needs a header row and commas between values. "
-    "Exits with code 1 if any check fails."
+    "Exits with code 1 if any check fails. In the app, type fit check on its own "
+    "to be asked for the file and the choices."
 )
 
 

@@ -77,8 +77,22 @@ The owner chose the defaults for the checks' open points on 2026-10-20 after see
 - **Columns.** With two columns, `--x` and `--y` can be left out, and the first column is x. With more than two, both must be named. Names match with or without the unit in brackets, ignoring capitals.
 - **`syn fit check`** exits with 1 if any check fails, as `syn doctor` does.
 
+## Details settled for #86
+The owner chose the defaults on 2026-10-20.
+
+- **When the questions start.** `fit check` typed on its own in the app asks them. With any option, such as `--x dose` and no file, the usage error shows as before. `syn fit check` always needs a file.
+- **The questions, in order**, each shown with the answer typed:
+  - `Which file? Type its path, or drag it in:`. A wrong path prints the error and asks again.
+  - A preview of the file: `NAME: N rows, N columns`, the column names and the first 6 rows in aligned columns (a cell longer than 16 characters ends in `…`), then `Showing all N rows.` or `Showing the first 6 of N rows.`
+  - `Which column is x (…)`, then `Which column is y (…)`, listing only the columns left. A file with two columns skips both, and the preview ends with `Using dose as x and growth as y.`
+  - `Unit of dose [µM]:`, pre-filled from the unit in brackets in the column's name, so Enter keeps it. With no unit in the name, `Unit of growth (Enter to skip):`. Skipping gives the A10 flag.
+  - `Are growth values at the same dose repeats of one measurement? [Y/n]`, asked only when several y values share an x. Enter means yes, as the `--repeats` default does. Only `n` or `no` means no.
+- **No shape question.** The checks allow for any shape, as `syn fit check` does without `--model`.
+- **The same report.** The answers become the same options as the flags and go through the same code, so the report has the same words.
+- **Cancelling** with Esc says `‹ Cancelled. Nothing was checked.`
+
 ## Consequences
 - Every caution and warning on screen changes colour on purpose: card flags, the `config` count line, doctor's unverified list and the history-save message. A test checks the colours.
 - The template now has 17 entries, so a new workspace starts with 17 unverified values.
 - `count_line()` now takes a list of entries rather than the whole config, so a group can be counted on its own.
-- #86 depends on #84, and records any further details here.
+- #86's details are above. A question can now work out its words and its pre-filled answer from the earlier answers, and can show a line (the preview) after a good answer.

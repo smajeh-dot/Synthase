@@ -136,7 +136,8 @@ from synthase.config_text import (
 )
 from synthase.doctor import Check, ReportText, report_text, run_checks
 from synthase.fit_check import FitError, Report
-from synthase.fit_text import SEE_THRESHOLDS_APP, unverified_warning
+from synthase.fit_questions import fit_args, fit_flow
+from synthase.fit_text import NOTHING_CHECKED, SEE_THRESHOLDS_APP, unverified_warning
 from synthase.fit_text import count_line as fit_count_line
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
@@ -887,9 +888,25 @@ class SynthaseApp(App):
 
     def run_fit(self, text: str) -> None:
         """fit check, read and worded as syn fit check (decision 0019)."""
-        args = self.parse_subcommand(text, FIT)
-        if args is None:
+        try:
+            words = [word.lower() for word in split_words(text)[1:]]
+        except UsageError:
+            words = []
+        if words == ["check"]:
+            # With nothing else typed, ask for the file and the choices.
+            self.ask(
+                "fit check",
+                fit_flow(),
+                lambda answers: self.show_fit_check(fit_args(answers)),
+                NOTHING_CHECKED,
+            )
             return
+        args = self.parse_subcommand(text, FIT)
+        if args is not None:
+            self.show_fit_check(args)
+
+    def show_fit_check(self, args: argparse.Namespace) -> None:
+        """Run fit check with ``args`` and show the report, however they came."""
         try:
             report = run_fit_check(args, load_config(current_workspace()))
         except (WorkspaceError, ConfigError, FitError) as error:
@@ -1258,19 +1275,23 @@ class SynthaseApp(App):
             except (WorkspaceError, CompoundError) as error:
                 self.say("error", in_app(str(error)))
         else:
-            prompt = asked_text(asking.question.prompt.rstrip())
+            prompt = asked_text(asking.question.prompt_after(asking.answers).rstrip())
             self.query_one("#question", Static).update(prompt)
 
     def answer(self, text: str) -> None:
         """Check the answer typed; a wrong one is explained and asked again."""
         asking = self.asking
-        self.show(Answered(asked_text(asking.question.prompt), text))
+        prompt = asked_text(asking.question.prompt_after(asking.answers))
+        self.show(Answered(prompt, text))
         try:
             answer = asking.question.answer(text, asking.answers)
         except CompoundError as error:
             self.say("error", str(error))
             return
         asking.answers[asking.question.key] = answer
+        if asking.question.shown is not None:
+            if text := asking.question.shown(asking.answers):
+                self.say("normal", text)
         if asking.question.kept is not None and not answer:
             self.say("normal", asked_text(asking.question.kept))
         self.next_question()
