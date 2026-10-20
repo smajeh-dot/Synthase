@@ -81,3 +81,31 @@ def invented_config(tmp_path, monkeypatch):
     (folder / "config.toml").write_text(INVENTED_CONFIG, encoding="utf-8")
     remember(folder)
     return folder
+
+
+def doses_a_text() -> str:
+    """The generated doses-a.csv: 10 doses × 3 repeats, all invented.
+
+    Doses double from 0.5 to 256 µM. Each response is a made-up S-curve,
+    0.1 + 0.9 × 16 / (16 + dose), then 0.02 below, on and above it. Only + and
+    / are used, so every platform writes the same numbers.
+    """
+    lines = ["dose (µM),response"]
+    for step in range(10):
+        dose = 0.5 * 2**step
+        middle = 0.1 + 0.9 * 16 / (16 + dose)
+        for offset in (-0.02, 0, 0.02):
+            lines.append(f"{dose:g},{middle + offset:.3f}")
+    return "\n".join(lines) + "\n"
+
+
+@pytest.fixture
+def fit_files(tmp_path):
+    """A folder of invented fit check files: doses-a.csv and the 4-point tiny.csv."""
+    folder = tmp_path / "fit data"
+    folder.mkdir()
+    (folder / "doses-a.csv").write_text(doses_a_text(), encoding="utf-8")
+    (folder / "tiny.csv").write_text(
+        "x,y\n1,0.9\n2,0.6\n4,0.3\n4,0.32\n", encoding="utf-8"
+    )
+    return folder

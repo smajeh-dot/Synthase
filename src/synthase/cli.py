@@ -80,8 +80,15 @@ from synthase.compounds import (
     table_row,
     unlink_spectrum,
 )
-from synthase.config import ConfigError, load_config
+from synthase.config import Config, ConfigError, load_config
 from synthase.doctor import report_text, run_checks
+from synthase.fit_check import FitError, Report, check_file
+from synthase.fit_shapes import SHAPES
+from synthase.fit_text import (
+    SEE_THRESHOLDS_SYN,
+    count_line,
+    unverified_warning,
+)
 from synthase.tables import (
     TableFolderError,
     kept_text,
@@ -177,6 +184,16 @@ COMPOUND_UNLINK_HELP = (
     "Remove a spectra link made by mistake, after a yes. The file itself is not "
     'touched, and the link stays in "syn compound history". With no file, '
     "Synthase lists the linked files and asks which one."
+)
+
+FIT_HELP = "check measurements before a curve is fitted to them"
+
+FIT_CHECK_HELP = (
+    "Check whether a CSV file of measurements is fit to have a curve fitted to "
+    "it: enough points, enough different x values, numbers in every cell, spread "
+    "across the range, suspect repeats and units. Nothing is fitted or saved, and "
+    "no point is removed. The file needs a header row and commas between values. "
+    "Exits with code 1 if any check fails."
 )
 
 
@@ -329,7 +346,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="also save the table as a CSV file. A file name alone goes in the "
         "compounds folder set in config.toml, or in the workspace's results folder",
     )
+    add_fit_commands(commands)
     return parser
+
+
+def add_fit_commands(commands: argparse._SubParsersAction) -> None:
+    """fit and fit check: step 1 of curve fitting (decision 0019)."""
+    fit = commands.add_parser(
+        "fit", help=FIT_HELP, description=FIT_HELP.capitalize() + "."
+    )
+    fit.set_defaults(fit_parser=fit)
+    fit_commands = fit.add_subparsers(dest="fit_command", title="commands")
+    check = fit_commands.add_parser(
+        "check",
+        help="check a data file is fit to have a curve fitted to it",
+        description=FIT_CHECK_HELP,
+    )
+    check.add_argument(
+        "file", metavar="FILE", type=Path, help="the CSV file of measurements"
+    )
+    check.add_argument(
+        "--x",
+        metavar="COLUMN",
+        help="the column of x values, by name; needed if the file has more than "
+        "two columns",
+    )
+    check.add_argument(
+        "--y",
+        metavar="COLUMN",
+        help="the column of y values, by name; needed if the file has more than "
+        "two columns",
+    )
+    check.add_argument(
+        "--x-unit",
+        metavar="UNIT",
+        help="the unit of x, if the column name doesn't end with one in "
+        "brackets, as in dose (µM)",
+    )
+    check.add_argument("--y-unit", metavar="UNIT", help="the unit of y, likewise")
+    check.add_argument(
+        "--repeats",
+        action=argparse.BooleanOptionalAction,
+        help="y values that share an x are repeats of one measurement (the "
+        "default), or with --no-repeats, separate points",
+    )
+    check.add_argument(
+        "--model",
+        metavar="SHAPE",
+        choices=list(SHAPES),
+        help="the shape to check against: "
+        + ", ".join(SHAPES)
+        + ". Without it, the checks allow for any shape",
+    )
 
 
 def add_field_options(
@@ -424,6 +492,11 @@ def main(argv: list[str] | None = None) -> int:
             return compound_unlink(args)
         args.compound_parser.print_help()
         return 0
+    if args.command == "fit":
+        if args.fit_command == "check":
+            return fit_check(args)
+        args.fit_parser.print_help()
+        return 0
     # With no command, a bare `syn` shows the help text.
     parser.print_help()
     return 0
@@ -477,6 +550,42 @@ def doctor() -> int:
 
     print(text.last)
     return 1 if report.failed else 0
+
+
+def fit_check(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(current_workspace())
+        report = run_fit_check(args, config)
+    except (WorkspaceError, ConfigError, FitError) as error:
+        print(error, file=sys.stderr)
+        return 1
+    print(report.heading)
+    print()
+    for finding in report.findings:
+        print(f"  {finding.word:<7} {finding.code:<4} {finding.text}")
+        if finding.fix:
+            print(f"  {'':<7} {'':<4} › Fix: {finding.fix}")
+    print()
+    print(count_line(report.findings))
+    warning = unverified_warning(report.used)
+    if warning:
+        print(warning)
+        print(SEE_THRESHOLDS_SYN)
+    return 1 if report.failed else 0
+
+
+def run_fit_check(args: argparse.Namespace, config: Config) -> Report:
+    """fit check's options, as syn and the app both read them."""
+    return check_file(
+        args.file,
+        config,
+        x=args.x,
+        y=args.y,
+        x_unit=args.x_unit,
+        y_unit=args.y_unit,
+        repeats=args.repeats,
+        shape=args.model,
+    )
 
 
 def compound_add(args: argparse.Namespace) -> int:

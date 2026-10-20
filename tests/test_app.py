@@ -273,6 +273,7 @@ def test_help_lists_every_command_then_how_to_get_more():
             "init",
             "doctor",
             "compound",
+            "fit",
             "config",
             "help",
             "quit",
@@ -316,7 +317,7 @@ def test_an_unknown_help_topic_lists_the_topics():
         assert messages(app)[-1] == (
             "error",
             'There\'s no help on "foo". '
-            "Topics: init, doctor, compound, config, help, quit.",
+            "Topics: init, doctor, compound, fit, config, help, quit.",
         )
 
     run(steps)
