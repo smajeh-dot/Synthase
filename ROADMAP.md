@@ -67,12 +67,13 @@ Behaviour:
 - Works as guided prompts, or as flags on the plain command line (for example `syn compound edit SYN-001 --mp "142-144"`). It joins the terminal interface in M2.
 - Tests use invented compounds only.
 
-### M2: terminal interface
-- Full-screen Textual app: scrolling output area, a fixed command bar, a status line, slash commands with tab completion, history, inline tables, and confirmation before overwriting files. Plots arrive in M4.
-- `/help [topic]` with fixed help text, and `/config` to show or edit settings.
-- `/compound`, `doctor` and `init` run inside the app, through the shared command layer.
+### M2: terminal interface (built; release in #63)
+- Full-screen [Textual](https://textual.textualize.io/) app, opened by typing `synthase` ([decision 0016](docs/decisions/0016-full-screen-app.md)): scrolling output area, a fixed command bar, a status line, slash commands with tab completion, inline tables, and confirmation before overwriting files. Command history is kept between sessions in the workspace. Plots arrive in M4.
+- `/help [topic]` with fixed help text, and `/config` to show and change settings: `/config set`, `/config source`, `/config verify` and `/config folder`, written with `tomlkit` so the config's comments stay ([decision 0017](docs/decisions/0017-editing-config.md)).
+- `/compound` (every subcommand), `/doctor` and `/init` run inside the app, through the shared command layer. Guided questions are asked in the app itself.
+- The compound text (record card, table, history lines) and the guided questions are each described once (#50, #51), so the plain command line and the app show the same words.
 - Anything that is not a command gives "unknown command, try /help".
-- Works best in Windows Terminal, which Windows 11 uses by default.
+- Works best in Windows Terminal, which Windows 11 uses by default. The README explains how to open it and the main keys (#62).
 
 ### M3: lab calculators and plate design
 

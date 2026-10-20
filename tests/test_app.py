@@ -3,6 +3,7 @@
 import asyncio
 import os
 from datetime import date
+from pathlib import Path
 
 from synthase import __version__
 from synthase import app as app_module
@@ -18,7 +19,7 @@ from synthase.app import (
     SynthaseApp,
 )
 from synthase.cli import main
-from synthase.commands import ROOT_HINT, SUBCOMMANDS_HINT
+from synthase.commands import ROOT_HINT, SUBCOMMANDS_HINT, command_list, find
 from synthase.compound_questions import Flow, Question, add_flow
 from synthase.compound_text import field_sections, section_lines
 from synthase.compounds import (
@@ -1904,3 +1905,20 @@ def test_help_config_lists_the_ways_to_change_a_setting():
             assert line in text
 
     run(steps)
+
+
+def test_the_readme_names_only_real_commands_and_keys():
+    """Each command and key in the README's "Using the app" section exists.
+
+    Opening, Ctrl+Q, Esc and Ctrl+C, Tab and history are run by the tests above.
+    """
+    text = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    section = text.split("## Using the app")[1].split("\n## ")[0]
+    root = command_list()
+    for typed in ("/doctor", "/help", "/help compound", "/quit", "/compound"):
+        assert find(typed, root), typed
+    assert "`/help compound`" in section and "`/quit`" in section
+    keys = {binding.key for binding in SynthaseApp.BINDINGS}
+    assert {"up", "down", "tab", "escape", "ctrl+c", "pageup", "pagedown"} <= keys
+    assert "Ctrl+Q" in section
+    assert "syn compound list" in section
