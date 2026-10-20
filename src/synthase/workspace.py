@@ -132,7 +132,7 @@ REPLACE_QUESTION = (
     "copy of the template? Any values you have checked will be reset (the old "
     "file is kept as config.toml.bak-…). Type yes to replace it [no]"
 )
-# What goes in each data folder, as `syn init` and `/init` list them.
+# What goes in each data folder, as `syn init` and `init` list them.
 WORKSPACE_CONTENTS = (
     ("raw", "plate reader exports, exactly as saved"),
     ("maps", "plate maps (which compound is in which well)"),
@@ -191,7 +191,7 @@ def create_workspace(path: Path | None, ask: Callable[[str], bool]) -> Created:
 
 @dataclass(frozen=True)
 class InitText:
-    """What `syn init` and `/init` say once the workspace is ready.
+    """What `syn init` and `init` say once the workspace is ready.
 
     ``rows`` holds a (name, what goes in it) row for each folder and the config.
     ``next`` is None when the config was kept as it was.

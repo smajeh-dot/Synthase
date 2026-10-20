@@ -72,7 +72,7 @@ Behaviour:
 - `/help [topic]` with fixed help text, and `/config` to show and change settings: `/config set`, `/config source`, `/config verify` and `/config folder`, written with `tomlkit` so the config's comments stay ([decision 0017](docs/decisions/0017-editing-config.md)).
 - `/compound` (every subcommand), `/doctor` and `/init` run inside the app, through the shared command layer. Guided questions are asked in the app itself.
 - The compound text (record card, table, history lines) and the guided questions are each described once (#50, #51), so the plain command line and the app show the same words.
-- Anything that is not a command gives "unknown command, try /help".
+- Commands are typed with or without a leading `/` ([decision 0018](docs/decisions/0018-commands-without-the-slash.md)). Anything that is not a command gives "unknown command, try help".
 - Works best in Windows Terminal, which Windows 11 uses by default. The README explains how to open it and the main keys (#62).
 
 ### M3: lab calculators and plate design

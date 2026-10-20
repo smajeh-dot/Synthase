@@ -52,7 +52,7 @@ synthase
 ```
 It works best in Windows Terminal, which is the default on Windows 11. The app opens in the same window, and your PowerShell comes back when you close it.
 
-Type a command that starts with `/`, such as `/doctor`, and press Enter. Anything else gets "unknown command, try /help".
+Type a command, such as `doctor`, and press Enter. A `/` in front (`/doctor`) works too, but isn't needed. Anything that isn't a command gets "unknown command, try help".
 
 | Key | What it does |
 |---|---|
@@ -61,9 +61,9 @@ Type a command that starts with `/`, such as `/doctor`, and press Enter. Anythin
 | Tab | Completes the command or topic you are typing, or lists the choices |
 | Esc or Ctrl+C | Cancels a question the app is asking you |
 | Page Up and Page Down | Scroll the output |
-| Ctrl+Q, or type `/quit` | Closes the app |
+| Ctrl+Q, or type `quit` | Closes the app |
 
-Type `/help` for the list of commands, or `/help compound` to see one command's options. The plain command line still works as before, for example `syn compound list`.
+Type `help` for the list of commands, or `help compound` to see one command's options. The plain command line still works as before, for example `syn compound list`.
 
 ## Updating after a change is merged
 

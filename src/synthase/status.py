@@ -42,12 +42,12 @@ def read_status() -> Status:
 def status_markup(status: Status, width: int) -> str:
     """The status line as content markup, its path shortened to fit ``width``."""
     if status.kind == "none":
-        return "[$accent]›[/] No workspace yet. Type /init to create one."
+        return "[$accent]›[/] No workspace yet. Type init to create one."
     if status.kind == "moved":
-        return "[b $caution]![/] Workspace not found. Type /init to choose it."
+        return "[b $caution]![/] Workspace not found. Type init to choose it."
     if status.kind == "problem":
         mark = "[b $error]✗[/]"
-        rest = "config.toml has a problem, run /doctor"
+        rest = "config.toml has a problem, run doctor"
         tail = f"{mark} [$error]{rest}[/]"
     else:
         if status.unverified == 0:

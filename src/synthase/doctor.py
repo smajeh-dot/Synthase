@@ -1,7 +1,7 @@
 """`syn doctor`: checks the install and the setup, and finds unverified values.
 
 The rules are in docs/decisions/0010-syn-doctor.md. The report's words are
-here too, so `syn doctor` and the app's `/doctor` say the same thing.
+here too, so `syn doctor` and the app's `doctor` say the same thing.
 Nothing here prints anything.
 """
 

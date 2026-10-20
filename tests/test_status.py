@@ -56,11 +56,11 @@ def test_status_wording_for_each_count():
 
 def test_status_wording_for_a_config_problem(tmp_path):
     text = plain(Status("problem", tmp_path), width=400)
-    assert text == f"Workspace: {tmp_path} · ✗ config.toml has a problem, run /doctor"
+    assert text == f"Workspace: {tmp_path} · ✗ config.toml has a problem, run doctor"
 
 
 def test_status_wording_when_the_workspace_has_moved():
-    assert plain(Status("moved")) == "! Workspace not found. Type /init to choose it."
+    assert plain(Status("moved")) == "! Workspace not found. Type init to choose it."
 
 
 def test_a_path_that_fits_is_kept_whole():

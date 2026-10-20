@@ -1,8 +1,8 @@
-"""The app's one command list, Tab completion over it, and the /help pages.
+"""The app's one command list, Tab completion over it, and the help pages.
 
 The list is the ``syn`` tree read from ``build_parser()``, plus the commands only
 the app has. A new command or option added to the parser is completed, and shows
-in /help, with no extra work. Like compound_text.py, nothing here prints anything.
+in help, with no extra work. Like compound_text.py, nothing here prints anything.
 The details are in docs/decisions/0016-full-screen-app.md under "Details settled
 for #53" and "Details settled for #54".
 """
@@ -22,20 +22,20 @@ APP_ONLY = (
     (
         "config",
         "show or change the settings",
-        "/config [NAME]",
+        "config [NAME]",
         "Show every value in config.toml with its unit, source and whether it "
         "has been checked, then the [folders] settings. Changing a value, or the "
         "source of a verified value, asks first.",
         (
             (
-                "/config NAME",
-                "show one value in full, e.g. /config mic.growth_threshold",
+                "config NAME",
+                "show one value in full, e.g. config mic.growth_threshold",
             ),
-            ("/config set NAME VALUE", "change a value; it is marked unverified again"),
-            ("/config source NAME TEXT", "set where a value comes from"),
-            ("/config verify NAME", "mark a value as checked against its source"),
+            ("config set NAME VALUE", "change a value; it is marked unverified again"),
+            ("config source NAME TEXT", "set where a value comes from"),
+            ("config verify NAME", "mark a value as checked against its source"),
             (
-                "/config folder AREA PATH",
+                "config folder AREA PATH",
                 'set the folder an area\'s tables are saved in; "" clears it',
             ),
         ),
@@ -43,25 +43,25 @@ APP_ONLY = (
     (
         HELP,
         "list the commands, or explain one",
-        "/help [COMMAND]",
+        "help [COMMAND]",
         "List every command, or explain one command and its options, "
-        "such as /help compound.",
+        "such as help compound.",
         (),
     ),
     (
         "quit",
         "leave Synthase (or press Ctrl+Q)",
-        "/quit",
+        "quit",
         "Leave Synthase. Ctrl+Q does the same.",
         (),
     ),
 )
-ROOT_HINT = "Type /help <command> for more, e.g. /help compound."
+ROOT_HINT = "Type help <command> for more, e.g. help compound."
 SUBCOMMANDS_HINT = (
-    "For a command's options, type /help {name} <command>, e.g. /help {first}."
+    "For a command's options, type help {name} <command>, e.g. help {first}."
 )
 NO_HELP = 'There\'s no help on "{asked}".'
-USAGE_HINT = "Type /help {topic} to see how it's used."
+USAGE_HINT = "Type help {topic} to see how it's used."
 UNCLOSED_QUOTE = "a quote isn't closed"
 
 
@@ -71,12 +71,12 @@ class UsageError(Exception):
 
 @dataclass
 class Command:
-    """One command: its subcommands and ``--options``, and the text /help shows."""
+    """One command: its subcommands and ``--options``, and the text help shows."""
 
     name: str
     subcommands: dict[str, "Command"] = field(default_factory=dict)
     options: list[str] = field(default_factory=list)
-    # How it is typed, such as "/compound batch"; empty for the root.
+    # How it is typed, such as "compound batch"; empty for the root.
     path: str = ""
     summary: str = ""
     usage: str = ""
@@ -95,7 +95,7 @@ class Completion:
 
 @dataclass(frozen=True)
 class HelpPage:
-    """What /help shows: paragraphs, two-column rows and a hint; or an error."""
+    """What help shows: paragraphs, two-column rows and a hint; or an error."""
 
     paragraphs: tuple[str, ...] = ()
     rows: tuple[tuple[str, str], ...] = ()
@@ -110,12 +110,12 @@ def _read(name: str, parser: argparse.ArgumentParser, path: str = "") -> Command
         if isinstance(action, argparse._SubParsersAction):
             summaries = {a.dest: a.help or "" for a in action._choices_actions}
             for sub_name, sub_parser in action.choices.items():
-                sub_path = f"{path} {sub_name}" if path else f"/{sub_name}"
+                sub_path = f"{path} {sub_name}" if path else sub_name
                 sub = _read(sub_name, sub_parser, sub_path)
                 sub.summary = summaries.get(sub_name, "")
                 command.subcommands[sub_name] = sub
         elif isinstance(action, argparse._HelpAction | argparse._VersionAction):
-            # /help is the app's way to get help, so -h and --help aren't offered.
+            # help is the app's way to get help, so -h and --help aren't offered.
             continue
         elif not action.option_strings:
             metavar = action.metavar or action.dest.upper()
@@ -140,25 +140,25 @@ def command_list() -> Command:
     for name, summary, usage, description, rows in APP_ONLY:
         root.subcommands[name] = Command(
             name,
-            path=f"/{name}",
+            path=name,
             summary=summary,
             usage=usage,
             description=description,
             rows=list(rows),
         )
-    # Tab after /help completes the topics: every command.
+    # Tab after help completes the topics: every command.
     root.subcommands[HELP].subcommands = root.subcommands
     return root
 
 
 def _topics(node: Command) -> dict[str, Command]:
     """The commands below ``node`` that have their own help."""
-    # /help's subcommands are only there for Tab; they aren't help topics.
-    return {} if node.path == f"/{HELP}" else node.subcommands
+    # help's subcommands are only there for Tab; they aren't help topics.
+    return {} if node.path == HELP else node.subcommands
 
 
 def help_page(topic: list[str], root: Command) -> HelpPage:
-    """The help for ``/help <topic>``, ignoring capitals and a leading slash."""
+    """The help for ``help <topic>``, ignoring capitals and a leading slash."""
     node = root
     for word in topic:
         child = _topics(node).get(word.lower().removeprefix("/"))
@@ -166,33 +166,32 @@ def help_page(topic: list[str], root: Command) -> HelpPage:
             asked = NO_HELP.format(asked=" ".join(topic).removeprefix("/"))
             if _topics(node):
                 return HelpPage(error=f"{asked} Topics: {', '.join(_topics(node))}.")
-            return HelpPage(error=f"{asked} Try /help {node.path[1:]}.")
+            return HelpPage(error=f"{asked} Try help {node.path}.")
         node = child
     rows = tuple((c.path, c.summary) for c in _topics(node).values())
     if node is root:
         return HelpPage(rows=rows, hint=ROOT_HINT)
     if rows:
-        first = rows[0][0][1:]
-        hint = SUBCOMMANDS_HINT.format(name=node.path[1:], first=first)
+        first = rows[0][0]
+        hint = SUBCOMMANDS_HINT.format(name=node.path, first=first)
         return HelpPage((node.description,), rows, hint)
     paragraphs = tuple(p for p in (node.usage, node.description) if p)
     return HelpPage(paragraphs, tuple(node.rows))
 
 
 def find(text: str, root: Command) -> Command | None:
-    """The top-level command a line starts with, ignoring spaces and capitals."""
+    """The top-level command a line starts with, ignoring spaces, capitals and a
+    leading slash."""
     words = text.strip().lower().split()
-    if not words or not words[0].startswith("/"):
+    if not words:
         return None
-    return root.subcommands.get(words[0][1:])
+    return root.subcommands.get(words[0].removeprefix("/"))
 
 
 def complete(text: str, root: Command) -> Completion:
     """Complete the last word of ``text``: a command, a subcommand or an option."""
-    if not text.lstrip().startswith("/"):
-        return Completion(text)
     words = text.split()
-    word = "" if text[-1].isspace() else words.pop()
+    word = "" if not text or text[-1].isspace() else words.pop()
     # Walk down the tree while the earlier words name subcommands.
     node, walked = root, True
     for earlier in words:
@@ -204,7 +203,8 @@ def complete(text: str, root: Command) -> Completion:
     if word.startswith("-"):
         candidates = node.options
     elif walked:
-        slash = "/" if node is root else ""
+        # A command typed with a slash is completed with its slash.
+        slash = "/" if node is root and word.startswith("/") else ""
         candidates = [slash + name for name in node.subcommands]
     else:
         # A compound ID or a file name: out of scope for #53.
