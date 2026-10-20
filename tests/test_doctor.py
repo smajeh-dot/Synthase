@@ -6,6 +6,7 @@ import pytest
 from synthase import doctor
 from synthase.cli import main
 from synthase.config import load_config
+from synthase.status import read_status
 from synthase.workspace import code_folder, create_workspace
 
 
@@ -129,6 +130,33 @@ def test_all_values_verified(workspace, capsys):
     assert code == 0
     assert "Every config value has been verified." in out
     assert "Unverified config values" not in out
+
+
+FIT_KEYS = [
+    "fit.min_points_per_setting",
+    "fit.min_distinct_x",
+    "fit.coverage_min_fraction",
+    "fit.outlier_flag",
+]
+
+
+def test_a_config_made_before_fit_gets_the_fit_values_unverified(workspace, capsys):
+    # A config from v0.2.0: every value checked, and no fit section yet.
+    config_file = workspace / "config.toml"
+    text = config_file.read_text(encoding="utf-8")
+    before, rest = text.split("# --- Curve fitting ---")
+    after = rest[rest.index("# --- Folders ---") :]
+    old = (before + after).replace("verified = false", "verified = true")
+    assert "[fit." not in old
+    config_file.write_text(old, encoding="utf-8")
+
+    code, out = run_doctor(capsys)
+    assert code == 0
+    # Worked by hand: the four fit values come from the template, unchecked.
+    assert "Unverified config values (4)." in out
+    listed = [line.split()[0] for line in out.splitlines() if line.startswith("  fit.")]
+    assert listed == FIT_KEYS
+    assert read_status().unverified == 4
 
 
 def test_rdkit_missing(workspace, capsys, monkeypatch):

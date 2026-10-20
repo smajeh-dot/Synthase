@@ -129,6 +129,7 @@ from synthase.config_text import (
     count_line,
     entry_key,
     entry_rows,
+    group_entries,
     read_settings,
     settings_heading,
 )
@@ -657,7 +658,7 @@ class SynthaseApp(App):
         self.refresh_status()
 
     def run_config(self, rest: str) -> None:
-        """The settings, or one value in full, checked as syn doctor checks them.
+        """The settings, one group or one value, checked as syn doctor checks them.
 
         ``rest`` is everything typed after config. A first word such as set
         changes a setting instead (decision 0017).
@@ -674,8 +675,13 @@ class SynthaseApp(App):
             return
         config = settings.config
         if names:
+            key = entry_key(names[0])
+            group = group_entries(config, key)
+            if group:
+                self.show_entries(settings_heading(config, key), group)
+                return
             try:
-                entry = config.get(entry_key(names[0]))
+                entry = config.get(key)
             except ConfigError as error:
                 self.say("error", str(error))
                 self.say("hint", EVERY_ENTRY)
@@ -684,11 +690,14 @@ class SynthaseApp(App):
             if entry.warning:
                 self.say("warning", entry.warning)
             return
-        entries = config_entries(config)
-        self.show(ConfigTable(settings_heading(config), entries))
-        unverified = any(not entry.verified for entry in entries)
-        self.say("warning" if unverified else "success", count_line(config))
+        self.show_entries(settings_heading(config), config_entries(config))
         self.show(DoctorChecks("", settings.folders))
+
+    def show_entries(self, heading: str, entries: list[ConfigValue]) -> None:
+        """``entries`` in the config table, then how many are still unverified."""
+        self.show(ConfigTable(heading, entries))
+        unverified = any(not entry.verified for entry in entries)
+        self.say("warning" if unverified else "success", count_line(entries))
 
     def read_config_settings(self) -> Settings | None:
         """The checked settings, or None after saying what doctor says is wrong."""

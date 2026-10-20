@@ -31,6 +31,7 @@ APP_ONLY = (
                 "config NAME",
                 "show one value in full, e.g. config mic.growth_threshold",
             ),
+            ("config GROUP", "show one group of values, e.g. config fit"),
             ("config set NAME VALUE", "change a value; it is marked unverified again"),
             ("config source NAME TEXT", "set where a value comes from"),
             ("config verify NAME", "mark a value as checked against its source"),

@@ -11,6 +11,7 @@ from synthase.config_text import (
     count_line,
     entry_key,
     entry_rows,
+    group_entries,
     read_settings,
     settings_heading,
 )
@@ -27,17 +28,34 @@ def test_rows_show_each_value_without_its_unit(invented_config):
     assert settings_heading(config) == f"Settings in {invented_config / 'config.toml'}"
 
 
+def counted(folder):
+    return count_line(config_entries(load_config(folder)))
+
+
 def test_the_count_line_says_how_many_are_left(invented_config):
-    config = load_config(invented_config)
-    assert count_line(config) == "2 of 4 values are still unverified."
+    assert counted(invented_config) == "2 of 4 values are still unverified."
     path = invented_config / "config.toml"
     text = path.read_text(encoding="utf-8")
     path.write_text(text.replace("false", "true", 1), encoding="utf-8")
-    assert (
-        count_line(load_config(invented_config)) == "1 of 4 values is still unverified."
-    )
+    assert counted(invented_config) == "1 of 4 values is still unverified."
     path.write_text(text.replace("false", "true"), encoding="utf-8")
-    assert count_line(load_config(invented_config)) == "All 4 values are verified."
+    assert counted(invented_config) == "All 4 values are verified."
+
+
+def test_a_group_is_the_entries_under_its_name(invented_config):
+    config = load_config(invented_config)
+    assert [entry.key for entry in group_entries(config, "test")] == [
+        "test.alpha",
+        "test.beta",
+        "test.gamma",
+        "test.delta",
+    ]
+    # Only whole names before the dot count, so "tes" is not a group.
+    assert group_entries(config, "tes") == []
+    assert group_entries(config, "test.alpha") == []
+    assert settings_heading(config, "test") == (
+        f"test settings in {invented_config / 'config.toml'}"
+    )
 
 
 def test_one_value_in_full(invented_config):

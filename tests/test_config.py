@@ -133,6 +133,10 @@ TEMPLATE_COVERS = [
     "units.concentration",
     "units.amount",
     "units.temperature",
+    "fit.min_points_per_setting",
+    "fit.min_distinct_x",
+    "fit.coverage_min_fraction",
+    "fit.outlier_flag",
 ]
 
 

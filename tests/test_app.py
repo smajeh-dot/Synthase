@@ -5,6 +5,8 @@ import os
 from datetime import date
 from pathlib import Path
 
+from textual.color import Color
+
 from synthase import __version__
 from synthase import app as app_module
 from synthase.app import (
@@ -472,7 +474,7 @@ def test_init_in_the_app_creates_then_keeps_replaces_and_cancels(tmp_path):
             ),
             ("normal", "Synthase will use this workspace from now on."),
         ]
-        assert status_text(app).endswith("? 13 config values unverified")
+        assert status_text(app).endswith("? 17 config values unverified")
         assert all((folder / name).is_dir() for name in FOLDERS)
         config.write_text("# checked by hand\n" + config.read_text("utf-8"), "utf-8")
         before = config.read_text("utf-8")
@@ -718,6 +720,26 @@ def test_compound_show_shows_the_card_for_any_form_of_id(tmp_path):
         assert "no Rf value yet" in missing
 
     run(steps, size=(120, 30))
+
+
+def test_cautions_and_warnings_are_coloured_across_the_whole_line(tmp_path):
+    invented_register(tmp_path)
+
+    async def steps(app, pilot):
+        app.say("caution", "An invented caution.")
+        app.say("warning", "Warning: an invented warning.")
+        await type_line(app, pilot, "compound show SYN-001")
+        colours = app.get_css_variables()
+        for kind in ("caution", "warning"):
+            colour = Color.parse(colours[kind])
+            for selector in (f".msg.-{kind}", f".msg.-card .flag.-{kind}"):
+                glyph = app.query_one(f"{selector} > .glyph")
+                text = app.query(f"{selector} > .body, {selector} > .text").first()
+                assert glyph.styles.color == colour, selector
+                assert glyph.styles.text_style.bold, selector
+                assert text.styles.color == colour, selector
+
+    run(steps)
 
 
 def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):
@@ -1617,6 +1639,40 @@ def test_config_name_shows_one_value_in_full(invented_config):
     run(steps)
 
 
+def test_config_group_shows_only_that_groups_values(tmp_path):
+    folder = invented_workspace(tmp_path, unverified=17)
+    for name in FOLDERS:
+        (folder / name).mkdir()
+    source = "UNVERIFIED placeholder: check against the literature"
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "config fit")
+        echo, table, count = messages(app)
+        assert table == (
+            "normal",
+            "\n".join(
+                [
+                    f"fit settings in {folder / 'config.toml'}",
+                    "Entry  Value  Unit  Verified  Source",
+                    f"fit.min_points_per_setting  5  -  ? no  {source}",
+                    f"fit.min_distinct_x  5  -  ? no  {source}",
+                    f"fit.coverage_min_fraction  0.2  -  ? no  {source}",
+                    f"fit.outlier_flag  3.5  -  ? no  {source}",
+                ]
+            ),
+        )
+        # Worked by hand: all four fit values are unverified, and no folders show.
+        assert count == ("warning", "4 of 4 values are still unverified.")
+        # Capitals and [ ] are ignored, as for one value.
+        await type_line(app, pilot, "config [FIT]")
+        assert messages(app)[-2][1] == table[1]
+        # A full name still shows that one value.
+        await type_line(app, pilot, "config fici.bands")
+        assert messages(app)[-2][1].startswith("fici.bands\nName  FICI interpretation")
+
+    run(steps, size=(200, 30))
+
+
 def test_config_name_that_isnt_there_or_more_than_one(invented_config):
     async def steps(app, pilot):
         await type_line(app, pilot, "config test.zeta")
@@ -1909,6 +1965,7 @@ def test_help_config_lists_the_ways_to_change_a_setting():
         await type_line(app, pilot, "help config")
         text = messages(app)[-1][1]
         for line in [
+            "config GROUP  show one group of values, e.g. config fit",
             "config set NAME VALUE  change a value; it is marked unverified again",
             "config source NAME TEXT  set where a value comes from",
             "config verify NAME  mark a value as checked against its source",
