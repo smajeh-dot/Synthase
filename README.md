@@ -42,6 +42,29 @@ See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
    ```
    It checks Python 3.13, reuses `.venv` (or creates it), installs Synthase, puts `syn` on your PATH and finishes by running `syn doctor`. After that, `syn` works in any **new** PowerShell window, from any folder, without activating `.venv` ([how](docs/decisions/0011-setup-script.md)).
 
+## Using the app
+
+Synthase has a full-screen app, and the plain command line (`syn`) described above. Both do the same work.
+
+**Open it:** after the setup script (step 7), open a **new** PowerShell window and type this from any folder:
+```powershell
+synthase
+```
+It works best in Windows Terminal, which is the default on Windows 11. The app opens in the same window, and your PowerShell comes back when you close it.
+
+Type a command that starts with `/`, such as `/doctor`, and press Enter. Anything else gets "unknown command, try /help".
+
+| Key | What it does |
+|---|---|
+| Enter | Runs what you typed |
+| Up and down arrows | Step back and forward through the commands you typed before |
+| Tab | Completes the command or topic you are typing, or lists the choices |
+| Esc or Ctrl+C | Cancels a question the app is asking you |
+| Page Up and Page Down | Scroll the output |
+| Ctrl+Q, or type `/quit` | Closes the app |
+
+Type `/help` for the list of commands, or `/help compound` to see one command's options. The plain command line still works as before, for example `syn compound list`.
+
 ## Updating after a change is merged
 
 1. Get the new code the way you usually do.
