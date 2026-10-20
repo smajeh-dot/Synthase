@@ -65,6 +65,8 @@ Type a command, such as `doctor`, and press Enter. A `/` in front (`/doctor`) wo
 
 Type `help` for the list of commands, or `help compound` to see one command's options. The plain command line still works as before, for example `syn compound list`.
 
+Manuals: [fit check](docs/fit-manual.md), for checking a file of measurements before a curve is fitted to it.
+
 ## Updating after a change is merged
 
 1. Get the new code the way you usually do.
