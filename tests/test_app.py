@@ -5,6 +5,8 @@ import os
 from datetime import date
 from pathlib import Path
 
+from textual.color import Color
+
 from synthase import __version__
 from synthase import app as app_module
 from synthase.app import (
@@ -718,6 +720,26 @@ def test_compound_show_shows_the_card_for_any_form_of_id(tmp_path):
         assert "no Rf value yet" in missing
 
     run(steps, size=(120, 30))
+
+
+def test_cautions_and_warnings_are_coloured_across_the_whole_line(tmp_path):
+    invented_register(tmp_path)
+
+    async def steps(app, pilot):
+        app.say("caution", "An invented caution.")
+        app.say("warning", "Warning: an invented warning.")
+        await type_line(app, pilot, "compound show SYN-001")
+        colours = app.get_css_variables()
+        for kind in ("caution", "warning"):
+            colour = Color.parse(colours[kind])
+            for selector in (f".msg.-{kind}", f".msg.-card .flag.-{kind}"):
+                glyph = app.query_one(f"{selector} > .glyph")
+                text = app.query(f"{selector} > .body, {selector} > .text").first()
+                assert glyph.styles.color == colour, selector
+                assert glyph.styles.text_style.bold, selector
+                assert text.styles.color == colour, selector
+
+    run(steps)
 
 
 def test_compound_list_filters_and_counts_as_syn_does(tmp_path, capsys):

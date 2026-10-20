@@ -46,10 +46,10 @@ Screen {
 .msg.-cancel > .glyph, .msg.-cancel > .body { color: $muted; }
 
 .msg.-caution > .glyph { color: $caution; text-style: bold; }
-.msg.-caution > .body { color: $foreground; }
+.msg.-caution > .body { color: $caution; }
 
 .msg.-warning > .glyph { color: $warning; text-style: bold; }
-.msg.-warning > .body { color: $foreground; }
+.msg.-warning > .body { color: $warning; }
 
 .msg.-error > .glyph { color: $error; text-style: bold; }
 .msg.-error > .body { color: $error; }
@@ -172,8 +172,8 @@ Screen {
 .msg.-card .rows.-spectra { grid-size: 3; grid-columns: auto auto 1fr; }
 .msg.-card .flag > .glyph { width: 2; height: auto; text-style: bold; }
 .msg.-card .flag > .text { width: 1fr; height: auto; }
-.msg.-card .flag.-caution > .glyph { color: $caution; }
-.msg.-card .flag.-warning > .glyph { color: $warning; }
+.msg.-card .flag.-caution > * { color: $caution; }
+.msg.-card .flag.-warning > * { color: $warning; }
 .msg.-card .flag.-hint > * { color: $muted; }
 .msg.-card .flag.-success > * { color: $success; }
 .msg.-card .missing { padding-left: 2; }
