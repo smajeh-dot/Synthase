@@ -16,6 +16,18 @@ CONFIG_HEADINGS = ("Entry", "Value", "Unit", "Verified", "Source")
 VERIFIED = "✓ yes"
 UNVERIFIED = "? no"
 ONE_NAME = "/config takes one entry name, e.g. /config mic.growth_threshold."
+# What each way of changing a setting takes, said when it is typed without it.
+EDIT_USAGE = {
+    "set": "/config set takes an entry name and a value, e.g. /config set "
+    "mic.growth_threshold 0.1.",
+    "source": "/config source takes an entry name and the source, e.g. /config "
+    "source mic.growth_threshold <reference>.",
+    "verify": "/config verify takes one entry name, e.g. /config verify "
+    "mic.growth_threshold.",
+    "folder": "/config folder takes a folder setting and a folder, e.g. /config "
+    'folder compounds D:\\Lab\\Compound tables, or "" to clear it.',
+}
+BACKED_UP = "The old file is kept as {name}."
 EVERY_ENTRY = "Type /config to see every entry."
 
 

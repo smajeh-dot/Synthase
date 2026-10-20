@@ -1591,7 +1591,7 @@ def test_config_name_that_isnt_there_or_more_than_one(invented_config):
             ),
             ("hint", "Type /config to see every entry."),
         ]
-        await type_line(app, pilot, "/config set test.alpha 3")
+        await type_line(app, pilot, "/config test.alpha test.beta")
         assert messages(app)[-1] == (
             "error",
             "/config takes one entry name, e.g. /config mic.growth_threshold.",
@@ -1641,5 +1641,244 @@ def test_config_that_is_broken_gives_doctors_error(invented_config, capsys):
         assert kind == "error"
         assert error.startswith(f"Your config file has a problem: {path}")
         assert f"FAIL  {error}" in printed
+
+    run(steps)
+
+
+def config_backups(folder):
+    return sorted(folder.glob("config.toml.bak-*"))
+
+
+def test_config_set_asks_then_changes_the_value_and_backs_up_once(invented_config):
+    path = invented_config / "config.toml"
+    before = path.read_bytes()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config set test.alpha 3")
+        assert answering(app)
+        assert bar_question(app) == (
+            "Change alpha limit from 2.5 mg to 3 mg? It will be marked unverified "
+            "until you check it again. Type yes to change it [no]:"
+        )
+        # Nothing is saved before the answer.
+        assert path.read_bytes() == before
+        await type_line(app, pilot, "yes")
+        backups = config_backups(invented_config)
+        assert len(backups) == 1
+        assert backups[0].read_bytes() == before
+        assert messages(app)[-2:] == [
+            ("success", "Changed alpha limit to 3 mg. It is now unverified."),
+            ("hint", f"The old file is kept as {backups[0].name}."),
+        ]
+        assert status_text(app).endswith("? 3 config values unverified")
+        # The second change in the session makes no second backup.
+        await type_line(app, pilot, "/config set test.alpha 4")
+        await type_line(app, pilot, "y")
+        assert messages(app)[-1] == (
+            "success",
+            "Changed alpha limit to 4 mg. It is now unverified.",
+        )
+        assert config_backups(invented_config) == backups
+        await type_line(app, pilot, "/config test.alpha")
+        assert "Value  4" in messages(app)[-2][1]
+
+    run(steps)
+
+
+def test_config_set_answered_no_or_cancelled_changes_nothing(invented_config):
+    path = invented_config / "config.toml"
+    before = path.read_bytes()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config set test.alpha 3")
+        await type_line(app, pilot, "")
+        assert messages(app)[-1] == ("cancel", "Nothing was changed.")
+        await type_line(app, pilot, "/config set test.alpha 3")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert messages(app)[-1] == ("cancel", "Cancelled. Nothing was changed.")
+        assert not answering(app)
+
+    run(steps)
+    assert path.read_bytes() == before
+    assert config_backups(invented_config) == []
+
+
+def test_config_set_refuses_a_value_of_the_wrong_kind(invented_config):
+    path = invented_config / "config.toml"
+    before = path.read_bytes()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config set test.beta 4 2")
+        assert not answering(app)
+        assert messages(app)[-1] == (
+            "error",
+            "That value can't be used for [test.beta]: a range must go from low "
+            "to high.",
+        )
+        await type_line(app, pilot, "/config set test.alpha 2.5")
+        assert messages(app)[-1] == ("success", "alpha limit is already 2.5 mg.")
+
+    run(steps)
+    assert path.read_bytes() == before
+
+
+def test_config_source_then_verify(invented_config):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config verify test.delta")
+        assert messages(app)[-1] == (
+            "error",
+            "Set its source first: /config source test.delta <reference>.",
+        )
+        # An unverified value's source is saved without a question.
+        await type_line(app, pilot, "/config source test.delta Invented Tables, p. 9")
+        assert not answering(app)
+        assert messages(app)[-3][1] == "Changed the source of delta unit."
+        assert messages(app)[-2][0] == "hint"
+        assert messages(app)[-1] == (
+            "hint",
+            "Type /config verify test.delta once you have checked the value "
+            "against it.",
+        )
+        await type_line(app, pilot, "/config verify [TEST.Delta]")
+        assert bar_question(app) == (
+            'Mark delta unit (mL) as checked against "Invented Tables, p. 9"? '
+            "Type yes to mark it verified [no]:"
+        )
+        await type_line(app, pilot, "yes")
+        assert messages(app)[-1] == ("success", "Marked delta unit (mL) as verified.")
+        assert status_text(app).endswith("? 1 config value unverified")
+        await type_line(app, pilot, "/config verify test.delta")
+        assert messages(app)[-1] == ("success", "delta unit is already verified.")
+
+    run(steps)
+
+
+def test_config_source_of_a_verified_value_asks_first(invented_config):
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config source test.alpha Invented Atlas")
+        assert bar_question(app).startswith(
+            'alpha limit is verified. Change its source to "Invented Atlas"? It '
+            "will be marked unverified until you check it again."
+        )
+        await type_line(app, pilot, "yes")
+        assert (
+            "success",
+            "Changed the source of alpha limit. It is now unverified.",
+        ) in messages(app)
+
+    run(steps)
+
+
+def test_config_folder_sets_and_clears_a_folder(invented_config):
+    other = invented_config / "other tables"
+    other.mkdir()
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, f'/config folder compounds "{other}"')
+        assert not answering(app)
+        done, backup, folder = messages(app)[-3:]
+        assert done == ("success", f"Tables for compounds will be saved in {other}.")
+        assert backup[0] == "hint"
+        assert folder[1] == f"ok    Compounds folder: {other}"
+        await type_line(app, pilot, '/config folder compounds ""')
+        assert messages(app)[-2] == (
+            "success",
+            "Cleared the compounds folder, so its tables are saved in the "
+            "workspace's results folder.",
+        )
+        await type_line(app, pilot, "/config folder plates D:/Lab")
+        assert messages(app)[-1] == (
+            "error",
+            "There's no folder setting called 'plates'. The settings are: compounds.",
+        )
+
+    run(steps, size=(200, 30))
+    text = (invented_config / "config.toml").read_text(encoding="utf-8")
+    assert "compounds = ''" in text
+
+
+def test_config_copies_an_entry_only_in_the_template_first(invented_config):
+    path = invented_config / "config.toml"
+    text = path.read_text(encoding="utf-8")
+    start = text.index("[test.delta]")
+    path.write_text(text[:start] + text[text.index("[folders]") :], "utf-8")
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config set test.delta µL")
+        assert messages(app)[-1] == (
+            "hint",
+            "[test.delta] isn't in config.toml yet, so it will be copied from the "
+            "template.",
+        )
+        await type_line(app, pilot, "yes")
+
+    run(steps)
+    assert '[test.delta]\nname = "delta unit"\nvalue = "µL"' in path.read_text("utf-8")
+
+
+def test_config_edits_typed_without_enough_words(invented_config):
+    async def steps(app, pilot):
+        for typed, expected in [
+            (
+                "/config set",
+                "/config set takes an entry name and a value, e.g. /config set "
+                "mic.growth_threshold 0.1.",
+            ),
+            (
+                "/config set test.alpha",
+                "/config set takes an entry name and a value, e.g. /config set "
+                "mic.growth_threshold 0.1.",
+            ),
+            (
+                "/config source test.alpha",
+                "/config source takes an entry name and the source, e.g. /config "
+                "source mic.growth_threshold <reference>.",
+            ),
+            (
+                "/config verify",
+                "/config verify takes one entry name, e.g. /config verify "
+                "mic.growth_threshold.",
+            ),
+            (
+                "/config verify test.alpha test.beta",
+                "/config verify takes one entry name, e.g. /config verify "
+                "mic.growth_threshold.",
+            ),
+            (
+                "/config folder compounds",
+                "/config folder takes a folder setting and a folder, e.g. /config "
+                'folder compounds D:\\Lab\\Compound tables, or "" to clear it.',
+            ),
+        ]:
+            await type_line(app, pilot, typed)
+            assert messages(app)[-1] == ("error", expected)
+            assert not answering(app)
+
+    run(steps)
+
+
+def test_config_edits_without_a_workspace_say_what_doctor_says():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/config set mic.growth_threshold 0.2")
+        assert messages(app)[1:] == [
+            ("error", 'There is no workspace yet. Run "/init" to create one.')
+        ]
+
+    run(steps)
+
+
+def test_help_config_lists_the_ways_to_change_a_setting():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "/help config")
+        text = messages(app)[-1][1]
+        for line in [
+            "/config set NAME VALUE  change a value; it is marked unverified again",
+            "/config source NAME TEXT  set where a value comes from",
+            "/config verify NAME  mark a value as checked against its source",
+            "/config folder AREA PATH  "
+            'set the folder an area\'s tables are saved in; "" clears it',
+        ]:
+            assert line in text
 
     run(steps)

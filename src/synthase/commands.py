@@ -16,15 +16,29 @@ from dataclasses import dataclass, field
 from synthase.cli import build_parser
 
 HELP = "help"
-# Commands only the app has: name, one-line help, usage and description.
+# Commands only the app has: name, one-line help, usage, description and the
+# ways to type it, each with its help.
 APP_ONLY = (
     (
         "config",
-        "show the settings, or one value in full",
+        "show or change the settings",
         "/config [NAME]",
         "Show every value in config.toml with its unit, source and whether it "
-        "has been checked, then the [folders] settings. /config NAME shows one "
-        "value in full, e.g. /config mic.growth_threshold.",
+        "has been checked, then the [folders] settings. Changing a value, or the "
+        "source of a verified value, asks first.",
+        (
+            (
+                "/config NAME",
+                "show one value in full, e.g. /config mic.growth_threshold",
+            ),
+            ("/config set NAME VALUE", "change a value; it is marked unverified again"),
+            ("/config source NAME TEXT", "set where a value comes from"),
+            ("/config verify NAME", "mark a value as checked against its source"),
+            (
+                "/config folder AREA PATH",
+                'set the folder an area\'s tables are saved in; "" clears it',
+            ),
+        ),
     ),
     (
         HELP,
@@ -32,12 +46,14 @@ APP_ONLY = (
         "/help [COMMAND]",
         "List every command, or explain one command and its options, "
         "such as /help compound.",
+        (),
     ),
     (
         "quit",
         "leave Synthase (or press Ctrl+Q)",
         "/quit",
         "Leave Synthase. Ctrl+Q does the same.",
+        (),
     ),
 )
 ROOT_HINT = "Type /help <command> for more, e.g. /help compound."
@@ -121,9 +137,14 @@ def _read(name: str, parser: argparse.ArgumentParser, path: str = "") -> Command
 def command_list() -> Command:
     """Every app command, as a tree under a nameless root."""
     root = _read("", build_parser())
-    for name, summary, usage, description in APP_ONLY:
+    for name, summary, usage, description, rows in APP_ONLY:
         root.subcommands[name] = Command(
-            name, path=f"/{name}", summary=summary, usage=usage, description=description
+            name,
+            path=f"/{name}",
+            summary=summary,
+            usage=usage,
+            description=description,
+            rows=list(rows),
         )
     # Tab after /help completes the topics: every command.
     root.subcommands[HELP].subcommands = root.subcommands
