@@ -14,7 +14,7 @@ from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, HorizontalGroup, Vertical, VerticalScroll
-from textual.markup import escape
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
@@ -333,8 +333,8 @@ class Answered(Message):
         self.answer = answer
 
     def compose(self) -> ComposeResult:
-        markup = f"[$muted]{escape(self.prompt)}[/][$answer]{escape(self.answer)}[/]"
-        yield Static(markup, classes="body")
+        text = Content.assemble((self.prompt, "$muted"), (self.answer, "$answer"))
+        yield Static(text, classes="body")
 
 
 class Rows(Message):
