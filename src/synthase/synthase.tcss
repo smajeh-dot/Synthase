@@ -84,6 +84,27 @@ Screen {
 .msg.-doctor .word.-fail, .msg.-doctor .text.-fail { color: $error; }
 .msg.-doctor .fix { color: $foreground; }
 
+/* fit check: the heading, then each check's word, code and text in three
+   columns, with a FAIL's › Fix: under its text. ok and info are muted; a flag
+   is caution and a FAIL error, across the whole line. */
+.msg.-fit > .body > .heading { height: auto; color: $heading; text-style: bold; }
+.msg.-fit .rows {
+    height: auto;
+    margin-top: 1;
+    grid-size: 3;
+    grid-columns: auto auto 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 1;
+}
+.msg.-fit .rows > * { height: auto; }
+.msg.-fit .word { width: 6; text-style: bold; }
+.msg.-fit .word.-ok, .msg.-fit .word.-info, .msg.-fit .code, .msg.-fit .fix {
+    color: $muted;
+}
+.msg.-fit .-flag { color: $caution; }
+.msg.-fit .-fail { color: $error; }
+.msg.-fit-count { margin-top: 1; }
+
 .msg.-unverified, .msg.-doctor-last { margin-top: 1; }
 .msg.-unverified > .body > .heading { height: auto; }
 .msg.-unverified .rows {

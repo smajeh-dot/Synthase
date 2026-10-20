@@ -1993,3 +1993,103 @@ def test_the_readme_names_only_real_commands_and_keys():
     assert {"up", "down", "tab", "escape", "ctrl+c", "pageup", "pagedown"} <= keys
     assert "Ctrl+Q" in section
     assert "syn compound list" in section
+
+
+def test_fit_check_says_what_syn_fit_check_says(tmp_path, fit_files, capsys):
+    doctor_workspace(tmp_path, unverified=17)
+    path = fit_files / "tiny.csv"
+    main(["fit", "check", str(path)])
+    printed = capsys.readouterr().out.splitlines()
+
+    async def steps(app, pilot):
+        # A path with a space, dragged in with quotes, as PowerShell gives it.
+        await type_line(app, pilot, f'fit check "{path}"')
+        _, report, count, warning, hint = messages(app)
+        heading, blank, *rows = report[1].splitlines()
+        # The same words as syn, without syn's two-space indent.
+        assert [heading, blank, *(f"  {row}" for row in rows)] == printed[
+            : 2 + len(rows)
+        ]
+        assert count == ("normal", "Checks: 11 run, 7 passed, 2 flagged, 2 failed.")
+        assert warning == ("warning", printed[-2])
+        assert hint == ("hint", "See them with config fit.")
+        assert shown(app, ".msg.-fit .word.-fail") == ["✗ FAIL", "✗ FAIL"]
+        assert shown(app, ".msg.-fit .fix")[0] == (
+            "› Fix: Measure more points, or choose a shape with fewer settings."
+        )
+        colours = app.get_css_variables()
+        for level, colour in (("flag", "caution"), ("fail", "error")):
+            for part in ("word", "code", "text"):
+                widget = app.query(f".msg.-fit .{part}.-{level}").first()
+                assert widget.styles.color == Color.parse(colours[colour]), (
+                    level,
+                    part,
+                )
+        muted = Color.parse(colours["muted"])
+        assert app.query(".msg.-fit .word.-ok").first().styles.color == muted
+        assert app.query(".msg.-fit .word.-info").first().styles.color == muted
+
+    run(steps, size=(120, 30))
+
+
+def test_fit_check_wraps_inside_80_columns(tmp_path, fit_files):
+    doctor_workspace(tmp_path, unverified=17)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, f'fit check "{fit_files / "doses-a.csv"}"')
+        report = app.query_one(app_module.FitReport)
+        assert report.size.width < 80
+        # Long rows wrap under their own column, so the report is taller than
+        # its lines of text.
+        assert report.size.height > len(report.text.splitlines())
+        assert messages(app)[2] == ("normal", "Checks: 11 run, 10 passed, 1 flagged.")
+
+    run(steps, size=(80, 24))
+
+
+def test_fit_check_mistakes_say_what_is_wrong(tmp_path, fit_files):
+    doctor_workspace(tmp_path, unverified=17)
+
+    async def steps(app, pilot):
+        await type_line(app, pilot, "fit")
+        assert messages(app)[-2][1].startswith("Check measurements before a curve")
+        await type_line(app, pilot, "fit check")
+        assert messages(app)[-2:] == [
+            ("error", "the following arguments are required: FILE"),
+            ("hint", "Type help fit check to see how it's used."),
+        ]
+        await type_line(app, pilot, f'fit check "{fit_files / "none.csv"}"')
+        assert messages(app)[-1] == (
+            "error",
+            f"There's no file at {fit_files / 'none.csv'}.",
+        )
+        await type_line(
+            app, pilot, f'fit check "{fit_files / "tiny.csv"}" --model spline'
+        )
+        assert messages(app)[-2][1].startswith("argument --model: invalid choice")
+        await type_line(app, pilot, "fit frob")
+        assert messages(app)[-1] == ("error", UNKNOWN)
+
+    run(steps)
+
+
+def test_help_and_tab_know_fit_check_from_the_parser():
+    async def steps(app, pilot):
+        await type_line(app, pilot, "help fit check")
+        text = messages(app)[-1][1]
+        assert text.startswith(
+            "fit check FILE [--x COLUMN] [--y COLUMN] [--x-unit UNIT] [--y-unit UNIT] "
+            "[--no-repeats] [--model SHAPE]"
+        )
+        assert "--model SHAPE  the shape to check against: line, exponential" in text
+        await type_line(app, pilot, "help fit")
+        assert (
+            "fit check  check a data file is fit to have a curve fitted to it"
+            in (messages(app)[-2][1])
+        )
+        await press_tab(app, pilot, "fit ch")
+        assert bar(app) == "fit check "
+        await press_tab(app, pilot, "fit check doses.csv --mo")
+        assert bar(app) == "fit check doses.csv --model "
+
+    run(steps)
