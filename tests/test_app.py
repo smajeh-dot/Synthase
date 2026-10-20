@@ -19,7 +19,7 @@ from synthase.app import (
 )
 from synthase.cli import main
 from synthase.commands import ROOT_HINT, SUBCOMMANDS_HINT
-from synthase.compound_questions import add_flow
+from synthase.compound_questions import Flow, Question, add_flow
 from synthase.compound_text import field_sections, section_lines
 from synthase.compounds import (
     CLASSES,
@@ -624,6 +624,28 @@ def test_answers_with_markup_characters_show_as_typed(tmp_path):
         await type_line(app, pilot, "[b]$x[/b]")
         shown = str(app.query(".-answered .body").last().render())
         assert shown == "Label: [b]$x[/b]"
+
+    run(steps)
+
+
+def test_answered_questions_keep_values_in_brackets(tmp_path):
+    flow = Flow(
+        (),
+        (
+            Question("smiles", "SMILES", lambda text, answers: text, current="CCO"),
+            Question(
+                "yield", "Yield in %", lambda text, answers: text, current="64.2%"
+            ),
+        ),
+    )
+
+    async def steps(app, pilot):
+        app.ask("/compound edit", flow, lambda answers: None, "x")
+        await pilot.pause()
+        await type_line(app, pilot, "[Abc]")
+        await type_line(app, pilot, "")
+        shown = [str(w.render()) for w in app.query(".-answered .body")]
+        assert shown == ["SMILES [CCO]: [Abc]", "Yield in % [64.2%]: "]
 
     run(steps)
 
