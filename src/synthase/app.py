@@ -19,6 +19,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
 from synthase import __version__
+from synthase.cli import run_fit_check
 from synthase.commands import (
     HELP,
     USAGE_HINT,
@@ -134,6 +135,9 @@ from synthase.config_text import (
     settings_heading,
 )
 from synthase.doctor import Check, ReportText, report_text, run_checks
+from synthase.fit_check import FitError, Report
+from synthase.fit_text import SEE_THRESHOLDS_APP, unverified_warning
+from synthase.fit_text import count_line as fit_count_line
 from synthase.history import History, history_file
 from synthase.status import Status, read_status, status_markup
 from synthase.tables import (
@@ -163,6 +167,7 @@ DOCTOR = "doctor"
 CONFIG = "config"
 INIT = "init"
 COMPOUND = "compound"
+FIT = "fit"
 # The top rule's title while a command is asking questions.
 ANSWERING = " Answering {command} · Esc cancels "
 CANCELLED = "Cancelled. {nothing}"
@@ -249,6 +254,39 @@ class DoctorChecks(Message):
                     if check.fix:
                         yield Label("", classes="word")
                         yield Static(f"Fix: {check.fix}", classes="fix", markup=False)
+
+
+class FitReport(Message):
+    """The fit check heading, then each check's word, code and text in columns.
+
+    A FAIL's › Fix: sits under its text.
+    """
+
+    def __init__(self, report: Report) -> None:
+        lines = [report.heading, ""]
+        for finding in report.findings:
+            lines.append(f"{finding.word:<7} {finding.code:<4} {finding.text}")
+            if finding.fix:
+                lines.append(f"{'':<7} {'':<4} › Fix: {finding.fix}")
+        super().__init__("normal", "\n".join(lines))
+        self.add_class("-fit")
+        self.heading = report.heading
+        self.findings = report.findings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="body"):
+            yield Static(self.heading, classes="heading", markup=False)
+            with Grid(classes="rows"):
+                for finding in self.findings:
+                    level = f"-{finding.level}"
+                    yield Label(finding.word, classes=f"word {level}", markup=False)
+                    yield Label(finding.code, classes=f"code {level}", markup=False)
+                    yield Static(finding.text, classes=f"text {level}", markup=False)
+                    if finding.fix:
+                        yield Label("", classes="word")
+                        yield Label("", classes="code")
+                        fix = f"› Fix: {finding.fix}"
+                        yield Static(fix, classes="fix", markup=False)
 
 
 class UnverifiedValues(Message):
@@ -629,6 +667,8 @@ class SynthaseApp(App):
             self.run_init(text.split(maxsplit=1)[1:])
         elif command.name == COMPOUND:
             self.run_compound(text)
+        elif command.name == FIT:
+            self.run_fit(text)
 
     def show_help(self, topic: list[str]) -> None:
         page = help_page(topic, self.commands)
@@ -809,32 +849,60 @@ class SynthaseApp(App):
         # History lives in the workspace, so it follows the new one.
         self.history = History.load(history_file())
 
-    def run_compound(self, text: str) -> None:
-        """The compound commands the app has, read as syn compound reads them."""
+    def parse_subcommand(self, text: str, top: str) -> argparse.Namespace | None:
+        """``text`` read as syn reads ``top``'s subcommands.
+
+        None after showing the help, or saying what's wrong, instead.
+        """
         try:
             words = split_words(text)[1:]
         except UsageError as error:
             self.say("error", str(error))
-            return
+            return None
         if not words:
-            self.show_help([COMPOUND])
-            return
+            self.show_help([top])
+            return None
         name = words[0] = words[0].lower()
-        if name not in self.commands.subcommands[COMPOUND].subcommands:
+        if name not in self.commands.subcommands[top].subcommands:
             self.say("error", UNKNOWN)
         elif "-h" in words or "--help" in words:
-            self.show_help([COMPOUND, name])
+            self.show_help([top, name])
         else:
             try:
-                args = parse_command([COMPOUND, *words])
+                return parse_command([top, *words])
             except UsageError as error:
                 self.say("error", str(error))
-                self.say("hint", USAGE_HINT.format(topic=f"{COMPOUND} {name}"))
-                return
-            try:
-                self.compound_command(args)
-            except (WorkspaceError, CompoundError) as error:
-                self.say("error", in_app(str(error)))
+                self.say("hint", USAGE_HINT.format(topic=f"{top} {name}"))
+        return None
+
+    def run_compound(self, text: str) -> None:
+        """The compound commands the app has, read as syn compound reads them."""
+        args = self.parse_subcommand(text, COMPOUND)
+        if args is None:
+            return
+        try:
+            self.compound_command(args)
+        except (WorkspaceError, CompoundError) as error:
+            self.say("error", in_app(str(error)))
+
+    def run_fit(self, text: str) -> None:
+        """fit check, read and worded as syn fit check (decision 0019)."""
+        args = self.parse_subcommand(text, FIT)
+        if args is None:
+            return
+        try:
+            report = run_fit_check(args, load_config(current_workspace()))
+        except (WorkspaceError, ConfigError, FitError) as error:
+            self.say("error", in_app(str(error)))
+            return
+        self.show(FitReport(report))
+        count = Message("normal", fit_count_line(report.findings))
+        count.add_class("-fit-count")
+        self.show(count)
+        warning = unverified_warning(report.used)
+        if warning:
+            self.say("warning", warning)
+            self.say("hint", SEE_THRESHOLDS_APP)
 
     def compound_command(self, args: argparse.Namespace) -> None:
         workspace = current_workspace()

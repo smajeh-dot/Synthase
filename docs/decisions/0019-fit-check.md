@@ -57,8 +57,28 @@ Step 1 of the 8-step build is `fit check` (#84). It reads a CSV of measurements 
     - each third of the log range includes its lower edge, and the top third includes 256, so the thirds hold 9, 9 and 12 points
   - **Commands are named without the slash** (decision 0018): `fit check`, `config fit`.
 
+## Details settled for #84
+The owner chose the defaults for the checks' open points on 2026-10-20 after seeing a sample report.
+
+- **Which rows count as points.** Only a row with a number in both the x and the y column is a point. Text such as `n/a` fails A3, and a row with only one of the two values fails A5. A row is a repeat of another (the A5 flag) only if every cell matches, so two equal readings in different wells are not flagged.
+- **A dose of 0** never blocks. A6 flags it as an untreated control, and A8 leaves it out of the log scale and says how many points it left out. Only an x below 0 blocks, and only for a shape fitted on log x: today that is the s-curve. With no shape chosen, an x below 0 is a flag. With any other shape, A6 says the shape can use x values of any sign.
+- **A8's scale.** A8 uses a log scale when no shape is chosen, or when the shape is fitted on log x, as long as no x is below 0. Otherwise it uses a plain scale. A point exactly on the edge between two thirds goes in the upper one. A flag names how many thirds hold less than `fit.coverage_min_fraction` of the points.
+- **A9.**
+  - Only an x with at least 3 repeats can be checked. Its points are compared by robust z-score: the distance from the median, divided by the median absolute deviation over 0.6745. 0.6745 is the upper quartile of the standard normal distribution, worked out in code, so it is a mathematical constant, not a lab value.
+  - An x whose repeats mostly agree exactly has no spread to measure against, so it is skipped.
+  - With fewer than 3 repeats at every x, the row says `Too few repeats to compare. Suspect points are checked after fitting.`
+  - With `--no-repeats`, the row says that values sharing an x aren't repeats.
+- **A7** also flags when there are exactly as many different x values as settings, because the curve would then pass through every one.
+- **Info rows** (`· info`, muted) count as passed, so the count line reads `Checks: 11 run, 10 passed, 1 flagged.` A FAIL adds `, 2 failed`.
+- **Words.**
+  - Rows name the file's own columns, for example `10 different dose values`.
+  - Worked-out numbers are whole or to 3 significant figures. Values from the file are shown as typed.
+  - The `syn` report ends with `Run "syn doctor" to see them.` because `syn` has no `config` command. The app ends with `› See them with config fit.` Every other word is shared.
+- **Columns.** With two columns, `--x` and `--y` can be left out, and the first column is x. With more than two, both must be named. Names match with or without the unit in brackets, ignoring capitals.
+- **`syn fit check`** exits with 1 if any check fails, as `syn doctor` does.
+
 ## Consequences
 - Every caution and warning on screen changes colour on purpose: card flags, the `config` count line, doctor's unverified list and the history-save message. A test checks the colours.
 - The template now has 17 entries, so a new workspace starts with 17 unverified values.
 - `count_line()` now takes a list of entries rather than the whole config, so a group can be counted on its own.
-- #84 and #86 depend on this PR, and each records any further details here.
+- #86 depends on #84, and records any further details here.

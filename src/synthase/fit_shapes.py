@@ -16,3 +16,5 @@ SHAPES = {
 # The checks use this when no shape is chosen, so a file passes only if it
 # could be fitted by any of them.
 MOST_SETTINGS = max(SHAPES.values())
+# The shapes fitted against log x, so they can't use x values at or below 0.
+LOG_X_SHAPES = ("s-curve",)

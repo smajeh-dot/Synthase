@@ -54,8 +54,11 @@ def test_one_match_or_a_longer_shared_start_completes(typed, completed):
     [
         ("compound edit", ("edit", "edit-batch")),
         ("compound edit 1 --rf", ("--rf", "--rf-solvent")),
-        ("", ("compound", "config", "doctor", "help", "init", "quit")),
-        ("/", ("/compound", "/config", "/doctor", "/help", "/init", "/quit")),
+        ("", ("compound", "config", "doctor", "fit", "help", "init", "quit")),
+        (
+            "/",
+            ("/compound", "/config", "/doctor", "/fit", "/help", "/init", "/quit"),
+        ),
         ("help co", ("compound", "config")),
     ],
 )
@@ -122,6 +125,7 @@ def test_help_lists_every_command_then_how_to_get_more():
         "init",
         "doctor",
         "compound",
+        "fit",
         "config",
         "help",
         "quit",
@@ -193,7 +197,7 @@ def test_help_and_version_options_are_not_in_the_help():
         (
             ["foo"],
             'There\'s no help on "foo". '
-            "Topics: init, doctor, compound, config, help, quit.",
+            "Topics: init, doctor, compound, fit, config, help, quit.",
         ),
         (
             ["compound", "zzz"],
