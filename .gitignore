@@ -30,12 +30,6 @@ dist/
 id_rsa*
 id_ed25519*
 
-# SQLite databases (the compound register lives in the workspace, not here)
-*.db
-*.sqlite
-*.sqlite3
-*-journal
-
 # Lab data: everything in data/ except the invented samples in data/samples/.
 # This has to be data/* rather than data/, because git cannot un-ignore a file
 # inside a folder that is ignored as a whole.

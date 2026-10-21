@@ -5,18 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "synthase-lab"
 version = "0.2.0"
-description = "Deterministic, offline lab calculations and data analysis from the terminal."
+description = "A lab databank and saved curve fits, in a full-screen app in PowerShell."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
-dependencies = ["rdkit>=2026.9.1", "textual>=8.2.8,<9", "tomlkit>=0.13,<1"]
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pre-commit", "pytest", "ruff"]
 
 [project.scripts]
-syn = "synthase.cli:main"
 synthase = "synthase.app:main"
 
 [tool.hatch.build.targets.wheel]

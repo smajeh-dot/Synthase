@@ -21,8 +21,22 @@ env:
 
 jobs:
   ci:
-    name: ci
-    runs-on: windows-latest
+    # Two checks: `ci` on 64-bit Intel/AMD Windows and `ci-arm64` on ARM64
+    # Windows, the owner's laptop (decision 0020). The ruleset requires `ci`.
+    # Lint, hooks and gitleaks run in `ci` only, since they don't depend on
+    # the processor.
+    name: ${{ matrix.check }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - check: ci
+            runner: windows-latest
+            arch: x64
+          - check: ci-arm64
+            runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     defaults:
       run:
@@ -38,6 +52,7 @@ jobs:
         id: setup-python
         with:
           python-version: "3.13"
+          architecture: ${{ matrix.arch }}
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -45,13 +60,16 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: ruff check
+        if: matrix.check == 'ci'
         run: ruff check .
 
       - name: ruff format --check
+        if: matrix.check == 'ci'
         run: ruff format --check .
 
       # The hooks' installs, reused until the hook versions or Python change.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: matrix.check == 'ci'
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
@@ -60,6 +78,7 @@ jobs:
       # as gitleaks below). gitleaks is skipped here because the step below runs
       # a pinned, checksum-checked copy. Design: docs/decisions/0013.
       - name: pre-commit (changed files only)
+        if: matrix.check == 'ci'
         env:
           SKIP: gitleaks
           FROM_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
@@ -71,13 +90,16 @@ jobs:
       - name: pytest
         run: python -m pytest
 
+      # "Install the project" put a synthase.exe in the job's own Python. On
+      # ARM64 runners that Python is on the machine PATH, so a new window would
+      # run it instead of the shim, and the setup script rightly refuses that.
+      - name: Remove the job's own synthase
+        run: python -m pip uninstall --yes synthase-lab
+
       # Runs the setup script as the owner does, twice to check it's safe to
-      # re-run. syn doctor needs a workspace, so one is made first. Design:
-      # docs/decisions/0011.
+      # re-run. Design: docs/decisions/0011 and 0020.
       - name: setup script
         run: |
-          syn init "$env:RUNNER_TEMP\workspace"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\scripts\setup.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           .\scripts\setup.ps1
@@ -85,24 +107,23 @@ jobs:
 
       # A new window gets its PATH from the registry only, so this step starts
       # from that, without the Python this job installed.
-      - name: syn works from a new window's PATH
+      - name: synthase works from a new window's PATH
         run: |
           $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
           $count = @($userPath -split ';' | Where-Object { $_.TrimEnd('\') -eq $bin }).Count
           if ($count -ne 1) { throw "The user PATH holds $bin $count times, not once: $userPath" }
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $userPath
-          $found = (Get-Command syn).Source
-          if ($found -ne (Join-Path $bin 'syn.cmd')) { throw "syn resolved to $found" }
-          # The app needs a terminal, so CI only checks that it is found.
           $app = (Get-Command synthase).Source
           if ($app -ne (Join-Path $bin 'synthase.cmd')) { throw "synthase resolved to $app" }
-          syn doctor
+          if (Get-Command syn -ErrorAction SilentlyContinue) { throw 'the retired syn command is still on the PATH' }
+          synthase
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Scans only the new commits: the PR's own commits, or the commits just
       # pushed to main. Older history was scanned when it was new.
       - name: gitleaks (new commits only)
+        if: matrix.check == 'ci'
         env:
           RANGE: ${{ github.event_name == 'pull_request' && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || format('{0}..{1}', github.event.before, github.sha) }}
         run: |
