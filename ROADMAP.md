@@ -10,7 +10,7 @@ How this file works:
 
 Ground rules every feature follows (spec Sections 1 to 3):
 - **AI-free and deterministic.** The same input always gives the same output.
-- **The tool is in the repo; the science is not.** Projects, experiments, values and compounds live in the owner's Synthase folder (`Documents\Synthase\`), outside this repo.
+- **The tool is in the repo; the science is not.** Projects, experiments, values and compounds live in a `data\` folder inside whichever folder the owner runs `synthase` in, outside this repo (decision [0023](docs/decisions/0023-command-set-and-project-folder.md)).
 - **A databank, not a calculator.** Values are stored exactly as typed and never rounded, converted or recalculated. Synthase only computes what can't be done by hand or on a scientific calculator.
 - **It doesn't duplicate the other tools.** No plotting or explanations (Claude), no spreadsheet or table viewer (Excel), no text editor (Word).
 - **Windows only.** Every setup and run instruction is for PowerShell, on native ARM64 or x64 Python 3.13.
