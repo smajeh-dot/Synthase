@@ -210,8 +210,7 @@ def _usage(commands: list[Command]) -> str:
 
 def _unknown(typed: str, candidates: list[str]) -> CommandError:
     return CommandError(
-        f"Unknown command '{typed}'. "
-        + suggestion(typed, candidates, "Commands", did_you_mean=True)
+        f"Unknown command '{typed}'. " + suggestion(typed, candidates, "Commands")
     )
 
 

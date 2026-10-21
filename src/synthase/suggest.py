@@ -24,9 +24,7 @@ def closest(typed: str, candidates: list[str]) -> list[str]:
     return [candidates[i] for i in ranked[:2]]
 
 
-def suggestion(
-    typed: str, candidates: list[str], kind: str, did_you_mean: bool = False
-) -> str:
+def suggestion(typed: str, candidates: list[str], kind: str) -> str:
     """The end of an "Unknown …" message: the closest matches, or the full list.
 
     ``kind`` labels the full list, e.g. ``Fields`` gives ``Fields: name, …``.
@@ -34,6 +32,4 @@ def suggestion(
     matches = closest(typed, candidates)
     if not matches:
         return f"{kind}: {', '.join(candidates)}"
-    if did_you_mean:
-        return f"Did you mean: {', '.join(matches)}?"
-    return f"Closest: {', '.join(matches)}"
+    return f"Did you mean: {', '.join(matches)}?"

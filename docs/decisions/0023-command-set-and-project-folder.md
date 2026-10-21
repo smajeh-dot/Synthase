@@ -40,7 +40,7 @@ How they behave, as agreed set by set:
 
 **Messages.**
 - A mistyped command word: `Unknown command 'epx'. Did you mean: exp, exit?` A mistyped second word: `Unknown command 'exp shwo'. Did you mean: exp show, exp open?` When nothing is close, every command is listed: `Unknown command 'xyz'. Commands: compound, exit, exp, help, project, value`.
-- A mistyped ID, field or value name keeps the spec's wording: `Unknown field 'molarmass' for C001. Closest: molar_mass, formula`, or the full list when nothing is close.
+- A mistyped ID, field or value name gets the same `Did you mean: …?` in place of the spec's `Closest: …`: `Unknown field 'molarmass' for C001. Did you mean: molar_mass, formula?`, or the full list when nothing is close (owner, 2026-10-21).
 - A missing or extra part prints `Usage: …`, one line for each form of the command typed.
 - `No Synthase project here. Type 'project create' to start one.`
 
@@ -55,7 +55,7 @@ How they behave, as agreed set by set:
 
 ## Consequences
 - `docs/spec.md` lists this record among the owner's later decisions. Where the spec's F1 command table, Section 3 folder layout, Section 3 examples, C166 (no renaming), C168 (rest-of-line commands), C170 (export paths) and C172 (file locations) disagree with it, this record wins.
-- The spec's Section 3 suggestion examples are tested through `compound show` instead of `fetch`, with the same messages.
+- The spec's Section 3 suggestion examples are tested through `compound show` instead of `fetch`, with `Did you mean: …?` in place of `Closest: …`.
 - The only command that takes the rest of the line is `exp open`, because a title can contain spaces.
 - Value names can't clash with command words, because every value command starts with `value`. A value may be called `compound` or `all`.
 - One file per kind means a broken hand-edit to `experiments.toml` blocks every experiment until it is fixed; Synthase still refuses to load it and names the line.

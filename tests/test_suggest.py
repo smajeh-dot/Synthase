@@ -27,17 +27,12 @@ def test_matching_is_case_sensitive():
 
 
 def test_suggestion_lists_the_closest():
-    assert suggestion("molarmass", FIELDS, "Fields") == "Closest: molar_mass, formula"
+    assert suggestion("molarmass", FIELDS, "Fields") == (
+        "Did you mean: molar_mass, formula?"
+    )
 
 
 def test_suggestion_lists_everything_when_nothing_is_close():
     assert suggestion("boiling", FIELDS, "Fields") == (
         "Fields: name, formula, molar_mass, density, purity, note"
-    )
-
-
-def test_suggestion_can_ask_did_you_mean():
-    assert (
-        suggestion("epx", ["compound", "exit", "exp"], "Commands", did_you_mean=True)
-        == "Did you mean: exp, exit?"
     )

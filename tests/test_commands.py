@@ -211,7 +211,8 @@ def test_tab_completes_command_words():
     assert complete("value add m_") == []
 
 
-# Spec Section 3, with `compound show` standing in for `fetch` (decision 0023).
+# Spec Section 3, with `compound show` standing in for `fetch` and
+# "Did you mean: …?" for "Closest: …" (decision 0023).
 FIELDS = ["name", "formula", "molar_mass", "density", "purity", "note"]
 LIBRARY = {
     "C001": {"name": "Salicylic acid", "molar_mass": "138.12 g/mol"},
@@ -239,11 +240,11 @@ def compound_show_stub(call):
     [
         (
             "compound show C001 molarmass",
-            "Unknown field 'molarmass' for C001. Closest: molar_mass, formula",
+            "Unknown field 'molarmass' for C001. Did you mean: molar_mass, formula?",
         ),
         (
             "compound show C010 formula",
-            "Unknown compound 'C010'. Closest: C001, C011",
+            "Unknown compound 'C010'. Did you mean: C001, C011?",
         ),
         (
             "compound show C001 boiling",

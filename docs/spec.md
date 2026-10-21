@@ -8,7 +8,7 @@
 > 3. **No leading `/`.** Commands are typed exactly as in this spec.
 > 4. **C164–C173 are accepted as written.** C174–C184 still await the owner's confirmation.
 > 5. **Exactly Python 3.13, native ARM64.** This narrows "3.11 or newer" (C184).
-> 6. **Noun-first commands and one folder per project** (decision 0023, #97). `project`, `exp`, `value` and `compound` commands replace F1's command table; `fetch` is folded into `show`. Synthase works in the folder it is run from, with its data in `data\` there, instead of `Documents\Synthase\`. Mistyped command words get `Did you mean: …?`. The full command set and its wording are in `docs/decisions/0023-command-set-and-project-folder.md`.
+> 6. **Noun-first commands and one folder per project** (decision 0023, #97). `project`, `exp`, `value` and `compound` commands replace F1's command table; `fetch` is folded into `show`. Synthase works in the folder it is run from, with its data in `data\` there, instead of `Documents\Synthase\`. Every suggestion reads `Did you mean: …?` instead of `Closest: …`. The full command set and its wording are in `docs/decisions/0023-command-set-and-project-folder.md`.
 
 ---
 
