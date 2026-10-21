@@ -33,7 +33,7 @@ Repo → **Settings** → **Rules** → **Rulesets** → **New ruleset** → **N
   - Block force pushes
   - Require a pull request before merging, with **Required approvals set to 0**. You can't approve your own PR, so 1 would lock you out.
 - Leave the bypass list empty.
-- Once the CI workflow (#8) has run at least once, edit the ruleset: tick **Require status checks to pass** → **Add checks** → type `ci` and pick it. GitHub only lists a check after it has run.
+- Once the CI workflow (#8) has run at least once, edit the ruleset: tick **Require status checks to pass** → **Add checks** → type `ci` and pick it, then do the same for `ci-arm64`. GitHub only lists a check after it has run.
 
 ## 6. Labels
 Repo → **Issues** → **Labels**:
@@ -43,22 +43,15 @@ Repo → **Issues** → **Labels**:
 | Group | Labels |
 |---|---|
 | Type | `feature`, `bug`, `test`, `docs`, `infra` |
-| Area | `chemistry`, `microbiology`, `interface`, `data` |
+| Area | `chemistry`, `biology`, `interface`, `data` |
 | Flag | `blocked`, `needs-verification`, `needs-decision` |
 
-## 7. Milestones
-Repo → **Issues** → **Milestones** → **New milestone**, six times. Leave **Due date** blank every time.
-1. `M0 Foundations`
-2. `M1 Compound register`
-3. `M2 Terminal interface`
-4. `M3 Lab calculators and plate design`
-5. `M4 Data pipeline`
-6. `M5 Results and record keeping`
+## 7. No milestones
+The repo doesn't use milestones (decision 0022). If any are listed at Repo → **Issues** → **Milestones**, click **Close** on each.
 
 ## Your part in the routine
 | When | What you do |
 |---|---|
 | A PR is marked ready | Read the PR and its "Files changed" tab, check CI is green, then click **Squash and merge**. The branch deletes itself. |
-| End of a milestone | Merge the `chore(release)` PR. Then go to **Releases** → **Draft a new release** → new tag `v0.X.0` on `main` → **Generate release notes** → **Publish release**. |
-| Before analysing real data for the write-up | Create a lab tag: **Releases** → **Draft a new release** → new tag `lab-YYYY-MM-DD` on `main` → tick **Set as a pre-release** → **Publish release**. |
+| You decide it's time for a new version | Tell Claude the number. Merge the `chore(release)` PR it prepares. Then go to **Releases** → **Draft a new release** → new tag `vX.Y.Z` on `main` → **Generate release notes** → **Publish release**. |
 | A token or personal information leaked | Revoke the token first, then follow "If something leaked" in `SKILL.md`. |

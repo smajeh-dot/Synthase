@@ -34,7 +34,7 @@ REST through `gh api`:
 
 ```bash
 R=repos/smajeh-dot/Synthase
-gh api $R/issues/<N> --jq '{title, state, labels: [.labels[].name], milestone: .milestone.title, body}'
+gh api $R/issues/<N> --jq '{title, state, labels: [.labels[].name], body}'
 gh api $R/issues/<N>/comments --jq '.[] | "--- \(.user.login) \(.created_at)\n\(.body)"'
 gh api $R/issues/<N>/timeline --jq '.[] | select(.event=="cross-referenced") | .source.issue | "#\(.number) \(.state) \(if .pull_request then "PR" else "issue" end) \(.title)"'
 gh api "$R/pulls?state=open" --jq '.[] | "#\(.number) \(.head.ref) \(.title)"'
@@ -64,7 +64,7 @@ Produce these sections, in this order, in plain text with no emojis:
 ```markdown
 ## #N: <title>
 <One plain sentence: what this issue delivers.>
-**Milestone:** … · **Labels:** … · **Size:** S (<100 lines) / M (100–300) / L (300–400; over 400 means split) · **Status:** not started / in progress (branch, PR link) · **Branch:** `claude/<type>/<N>-<short-description>`
+**Part of:** #parent, step N of its build plan · **Labels:** … · **Size:** S (<100 lines) / M (100–300) / L (300–400; over 400 means split) · **Status:** not started / in progress (branch, PR link) · **Branch:** `claude/<type>/<N>-<short-description>`
 
 ### What it asks for
 1. <One requirement per line> [stated] or [inferred: why]
@@ -104,14 +104,16 @@ Produce these sections, in this order, in plain text with no emojis:
 Anything that depends on the owner's judgement, knowledge or access. Check every
 category:
 
-- **Scientific values:** any constant, threshold or range. It goes in the config
-  template as an `UNVERIFIED` placeholder; the owner checks it against the
-  literature in their own workspace.
+- **Scientific values:** any constant, unit list, threshold or model formula the
+  work seems to need. Synthase has no built-in constants (spec C73), so it comes
+  from the spec or the owner, never from Claude's own knowledge.
 - **Real lab file formats:** if the work reads a lab file, ask for a blank-plate
   export or a description of the format. Never ask for real data.
-- **Terminal look and wording:** layout, colours, table shape, help text, error
-  messages, explanations of jargon. Put the proposed wording or a sample of the
-  output in the row itself, so the owner can approve it now. If the look needs
+- **Terminal look and wording:** layout, colours, table shape, command names,
+  usage lines, help text, error messages, explanations of jargon. Wording the spec
+  gives is used word for word; anything else, or a spec default the owner hasn't
+  confirmed (C174 to C184), gets the proposed wording or a sample of the output
+  in the row itself, so the owner can approve it now. If the look needs
   several rounds of feedback, plan a checkpoint with the owner before the goal is set.
 - **Scope and behaviour** the issue leaves open, contradictions between the issue,
   comments and code, and anything labelled `needs-decision`.
@@ -144,7 +146,7 @@ conversation**. It can't run commands, so the condition must:
 Example (for an invented issue):
 
 ```
-/goal Issue #99 is done: `syn yield` prints theoretical and percentage yield to 3 s.f., and the hand-worked tests in tests/test_yield.py pass; `python -m pytest` exits 0 and `ruff check .` is clean, both with output shown; the work is committed and pushed on claude/feat/99-yield-command; a draft PR closing #99 is open with every "Done when" box ticked and its URL printed; the session note is posted on #99. Or stop after 30 turns.
+/goal Issue #99 is done: `add m_crude 2.100 g` stores the value as `2.100` and `show` prints it unchanged, and the hand-worked tests in tests/test_values.py pass; `python -m pytest` exits 0 and `ruff check .` is clean, both with output shown; the work is committed and pushed on claude/feat/99-add-values; a draft PR closing #99 is open with every "Done when" box ticked and its URL printed; the session note is posted on #99. Or stop after 30 turns.
 ```
 
 ## 3. Stop
