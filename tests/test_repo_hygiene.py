@@ -50,9 +50,8 @@ def attribute(path, name):
     [
         ".env",
         "data/run.csv",
-        "register.db",
         ".venv/Scripts/python.exe",
-        "src/synthase/__pycache__/cli.cpython-313.pyc",
+        "src/synthase/__pycache__/app.cpython-313.pyc",
     ],
 )
 def test_forbidden_files_are_ignored(path):
@@ -61,7 +60,7 @@ def test_forbidden_files_are_ignored(path):
 
 @pytest.mark.parametrize(
     "path",
-    ["data/samples/example.csv", "src/synthase/cli.py", "README.md"],
+    ["data/samples/example.csv", "src/synthase/app.py", "README.md"],
 )
 def test_tool_files_and_samples_are_not_ignored(path):
     assert not is_ignored(path)
@@ -69,7 +68,7 @@ def test_tool_files_and_samples_are_not_ignored(path):
 
 @pytest.mark.parametrize(
     ("path", "eol"),
-    [("scripts/setup.ps1", "crlf"), ("src/synthase/cli.py", "lf")],
+    [("scripts/setup.ps1", "crlf"), ("src/synthase/app.py", "lf")],
 )
 def test_line_endings(path, eol):
     assert attribute(path, "eol") == eol

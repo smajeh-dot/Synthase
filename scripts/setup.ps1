@@ -1,5 +1,5 @@
-# Installs or updates Synthase on this laptop, puts `syn` on your PATH and runs
-# `syn doctor`. Safe to run again after every merge. Design: docs/decisions/0011.
+# Installs or updates Synthase on this laptop and puts `synthase` on your PATH.
+# Safe to run again after every merge. Design: docs/decisions/0011 and 0020.
 #
 # Run it from the Synthase code folder:   .\scripts\setup.ps1
 #
@@ -12,17 +12,26 @@ $repo = Split-Path -Parent $PSScriptRoot
 $venv = Join-Path $repo '.venv'
 $venvPython = Join-Path $venv 'Scripts\python.exe'
 $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
-$shim = Join-Path $bin 'syn.cmd'
 $appShim = Join-Path $bin 'synthase.cmd'
+# The old plain command line, retired in decision 0020.
+$oldShim = Join-Path $bin 'syn.cmd'
 
-# Prints the version, the platform (such as win-amd64) and the full path of the
+# Prints the version, the platform (such as win-arm64) and the full path of the
 # Python that runs it.
 $probe = "import sys, sysconfig; print('%d.%d' % sys.version_info[:2]); print(sysconfig.get_platform()); print(sys.executable)"
 
-# RDKit only publishes Windows installs for 64-bit Intel/AMD Python, so an ARM
-# laptop needs that Python too. Windows 11 runs it through emulation.
-$wantPlatform = 'win-amd64'
-$installFix = 'install Python 3.13 from https://www.python.org/downloads/windows/ using "Windows installer (64-bit)", not ARM64, even on an ARM laptop'
+# The laptop's own processor, read from the system settings, because an
+# emulated PowerShell reports the emulated one. Synthase runs on a Python built
+# for this processor (decision 0020), so an ARM laptop needs the ARM64 Python.
+$machine = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment').PROCESSOR_ARCHITECTURE
+if ($machine -eq 'ARM64') {
+    $wantPlatform = 'win-arm64'
+    $installer = 'Windows installer (ARM64)'
+} else {
+    $wantPlatform = 'win-amd64'
+    $installer = 'Windows installer (64-bit)'
+}
+$installFix = "install Python 3.13 from https://www.python.org/downloads/windows/ using `"$installer`""
 
 function Write-Step([string]$text) {
     Write-Host "==> $text ... " -NoNewline
@@ -71,22 +80,40 @@ function Find-Python {
     }
 }
 
+# True when $path is inside a folder OneDrive syncs. Syncing locks and copies
+# files while Python writes them, which can break .venv.
+function Test-InOneDrive([string]$path) {
+    foreach ($root in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
+        if ($root -and $path.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 Write-Host 'Synthase setup'
 
-# 1. Python 3.13 (decision 0002), 64-bit Intel/AMD (decision 0011)
+# 0. A warning, not a stop: the code folder should not be synced by OneDrive.
+if (Test-InOneDrive $repo) {
+    Write-Host "WARNING: the code folder $repo is inside OneDrive."
+    Write-Host '         OneDrive can lock or duplicate files while Python uses them, which can break .venv.'
+    Write-Host "         Fix: put the code in a folder outside OneDrive, such as $env:USERPROFILE\dev\Synthase, and run this script there."
+}
+
+# 1. Python 3.13 (decision 0002), built for this laptop's processor (decision 0020)
 Write-Step 'Checking Python 3.13'
 $venvExists = Test-Path $venvPython
 if ($venvExists) {
     $python = Get-PythonInfo @($venvPython)
     if (-not (Test-RightPython $python)) {
         if ($python) { $found = "Python $($python.Version) for $($python.Platform)" } else { $found = 'a Python that does not run' }
-        Stop-Setup "The .venv folder uses $found. Synthase needs Python 3.13 for $wantPlatform (64-bit Intel/AMD), the only Windows version RDKit, the chemistry library, installs on." `
+        Stop-Setup "The .venv folder uses $found. Synthase needs Python 3.13 for $wantPlatform, this laptop's own processor." `
             "$installFix, if you don't have it yet. Then delete the .venv folder in $repo and run this script again."
     }
 } else {
     $python = Find-Python
     if (-not $python) {
-        Stop-Setup "Python 3.13 for $wantPlatform (64-bit Intel/AMD) was not found. It is the only Windows version RDKit, the chemistry library, installs on." `
+        Stop-Setup "Python 3.13 for $wantPlatform, this laptop's own processor, was not found." `
             "$installFix, then run this script again."
     }
 }
@@ -106,29 +133,32 @@ if ($venvExists) {
 }
 
 # 3. Synthase and its dependencies, with the developer tools
-Write-Step 'Installing Synthase and its dependencies (RDKit is about 30 MB)'
+Write-Step 'Installing Synthase and its dependencies'
 Push-Location $repo
 & $venvPython -m pip install --quiet --disable-pip-version-check -e '.[dev]'
 $pipExit = $LASTEXITCODE
 Pop-Location
 if ($pipExit -ne 0) {
-    Stop-Setup 'pip could not install Synthase (often RDKit, the chemistry library).' `
+    Stop-Setup 'pip could not install Synthase.' `
         'check your internet connection and run this script again. The error above says what went wrong.'
 }
-Write-Ok ''
+$installed = @(& $venvPython -c 'import synthase; print(synthase.__version__)' 2>$null)
+if ($LASTEXITCODE -ne 0 -or $installed.Count -lt 1) {
+    Stop-Setup 'Synthase was installed but Python cannot load it.' `
+        "delete the .venv folder in $repo and run this script again."
+}
+Write-Ok "Synthase $($installed[0].Trim())"
 
-# 4. `syn` and `synthase` (the app) on the PATH, through a folder that holds
-#    only syn.cmd and synthase.cmd, so the venv's own python and pip stay off
-#    the PATH.
-Write-Step 'Putting syn on your PATH'
+# 4. `synthase` on the PATH, through a folder that holds only synthase.cmd, so
+#    the venv's own python and pip stay off the PATH.
+Write-Step 'Putting synthase on your PATH'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 # cmd reads .cmd files in the console's code page, so a path with accented
 # letters must be written in that code page too.
 $oem = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
-$syn = Join-Path $venv 'Scripts\syn.exe'
-[IO.File]::WriteAllText($shim, "@`"$syn`" %*`r`n", $oem)
 $app = Join-Path $venv 'Scripts\synthase.exe'
 [IO.File]::WriteAllText($appShim, "@`"$app`" %*`r`n", $oem)
+if (Test-Path $oldShim) { Remove-Item $oldShim }
 
 function Test-OnPath([string]$pathList) {
     foreach ($entry in $pathList -split ';') {
@@ -157,14 +187,24 @@ if (Test-OnPath $userPath) {
 if (-not (Test-OnPath $env:Path)) { $env:Path = "$env:Path;$bin" }
 Write-Ok "$where`: $bin"
 
-# 5. The self-test, through the PATH folder (decision 0010)
-Write-Host '==> Running syn doctor ...'
-& $shim doctor
-$doctorExit = $LASTEXITCODE
-Write-Host ''
-if ($doctorExit -eq 0) {
-    Write-Host 'Setup finished. Open a new PowerShell window and type "synthase" from any folder to open the app, or "syn" for the plain commands.'
-} else {
-    Write-Host 'Setup finished, but syn doctor found a problem. Follow its Fix: lines above, then run "syn doctor" again.'
+# 5. Typing `synthase` in a new window must run synthase.cmd, not some other
+#    program or command with the same name found first.
+Write-Step 'Checking what "synthase" runs in a new window'
+$sessionPath = $env:Path
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+$first = Get-Command synthase -All -ErrorAction SilentlyContinue | Select-Object -First 1
+$env:Path = $sessionPath
+if (-not $first) {
+    Stop-Setup "A new window cannot find synthase, although $bin is on your PATH." `
+        'sign out of Windows and back in, then run this script again.'
 }
-exit $doctorExit
+$target = if ($first.CommandType -eq 'Application') { $first.Source } else { "the PowerShell $($first.CommandType.ToString().ToLower()) named $($first.Name)" }
+if ($target -ne $appShim) {
+    Stop-Setup "In a new window, typing synthase runs $target instead of $appShim." `
+        'remove or rename that one (a PowerShell alias or function lives in your profile: type notepad $PROFILE to open it), then run this script again.'
+}
+Write-Ok $appShim
+
+Write-Host ''
+Write-Host 'Setup finished. Open a new PowerShell window and type "synthase" from any folder.'
+exit 0
