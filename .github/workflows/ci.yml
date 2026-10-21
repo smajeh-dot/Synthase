@@ -173,6 +173,8 @@ jobs:
           if ($setupExit -ne 1) { throw "the setup exited with $setupExit, not 1" }
           $want = "Fix: remove or rename the function `"synthase`" in $profileFile (type notepad `"$profileFile`" to open it)"
           if (-not ($out -replace '\s', '').ToLower().Contains(($want -replace '\s', '').ToLower())) { throw "the Fix: line does not name $profileFile" }
+          # The setup's expected exit code 1 would otherwise become the step's.
+          exit 0
 
       # Scans only the new commits: the PR's own commits, or the commits just
       # pushed to main. Older history was scanned when it was new.
