@@ -9,6 +9,9 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 
+# Git hooks keep LF, because Git for Windows runs them with sh
+scripts/post-merge text eol=lf
+
 # Binary files: never convert line endings or diff as text
 *.png binary
 *.jpg binary

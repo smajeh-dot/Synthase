@@ -96,6 +96,12 @@ jobs:
       - name: Remove the job's own synthase
         run: python -m pip uninstall --yes synthase-lab
 
+      # A stand-in for the pre-commit hook Claude sessions install, so the
+      # update hook check below can show setup leaves it alone (decision 0021).
+      - name: Plant a stand-in pre-commit hook
+        run: |
+          [IO.File]::WriteAllText("$PWD\.git\hooks\pre-commit", "#!/bin/sh`n# stand-in`nexit 0`n")
+
       # Runs the setup script as the owner does, twice to check it's safe to
       # re-run. Design: docs/decisions/0011 and 0020.
       - name: setup script
@@ -119,6 +125,38 @@ jobs:
           if (Get-Command syn -ErrorAction SilentlyContinue) { throw 'the retired syn command is still on the PATH' }
           synthase
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # After two setup runs: one post-merge hook, the same as the template
+      # with LF endings, and the stand-in pre-commit hook unchanged.
+      - name: update hook installed, other hooks untouched
+        run: |
+          $hook = "$PWD\.git\hooks\post-merge"
+          if (-not (Test-Path $hook)) { throw "setup did not install $hook" }
+          $want = [IO.File]::ReadAllText("$PWD\scripts\post-merge") -replace "`r`n", "`n"
+          $got = [IO.File]::ReadAllText($hook)
+          if ($got -cne $want) { throw "$hook does not match scripts\post-merge" }
+          if ($got.Contains("`r")) { throw "$hook has CR line endings" }
+          $preCommit = [IO.File]::ReadAllText("$PWD\.git\hooks\pre-commit")
+          if ($preCommit -cne "#!/bin/sh`n# stand-in`nexit 0`n") { throw 'setup changed the pre-commit hook' }
+
+      # A fast-forward merge, as a git pull does, must run the hook and the
+      # whole setup script through Git for Windows' sh. Design: decision 0021.
+      - name: a merge re-runs the setup through the hook
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $start = git rev-parse HEAD
+          git checkout --quiet --detach
+          git -c user.name=ci -c user.email=ci@example.invalid commit --quiet --allow-empty -m 'stand-in change'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $next = git rev-parse HEAD
+          git checkout --quiet $start
+          $out = git merge --ff-only $next 2>&1 | Out-String
+          $mergeExit = $LASTEXITCODE
+          git checkout --quiet $start
+          Write-Host $out
+          if ($mergeExit -ne 0) { throw 'the merge failed' }
+          if (-not $out.Contains('Synthase: the pull brought in changes')) { throw 'the hook did not run' }
+          if ($out.Contains('setup failed') -or -not $out.Contains('Setup finished.')) { throw 'the hook ran, but the setup script did not finish' }
 
       # Scans only the new commits: the PR's own commits, or the commits just
       # pushed to main. Older history was scanned when it was new.

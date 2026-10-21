@@ -1,5 +1,6 @@
 # Installs or updates Synthase on this laptop and puts `synthase` on your PATH.
-# Safe to run again after every merge. Design: docs/decisions/0011 and 0020.
+# Safe to run again at any time, and in a git clone every `git pull` that brings
+# in changes runs it for you. Design: docs/decisions/0011, 0020 and 0021.
 #
 # Run it from the Synthase code folder:   .\scripts\setup.ps1
 #
@@ -149,7 +150,35 @@ if ($LASTEXITCODE -ne 0 -or $installed.Count -lt 1) {
 }
 Write-Ok "Synthase $($installed[0].Trim())"
 
-# 4. `synthase` on the PATH, through a folder that holds only synthase.cmd, so
+# 4. In a git clone, a post-merge hook that runs this script again after every
+#    git pull that brings in changes (decision 0021). Only post-merge is
+#    written, so other hooks such as pre-commit stay as they are.
+Write-Step 'Installing the update hook'
+$gitDir = Join-Path $repo '.git'
+if (Test-Path $gitDir -PathType Container) {
+    $hook = Join-Path $gitDir 'hooks\post-merge'
+    # LF endings whatever the checkout did, because Git for Windows runs hooks
+    # with sh, which reads a CR as part of the command.
+    $want = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'post-merge')) -replace "`r`n", "`n"
+    $have = if (Test-Path $hook) { [IO.File]::ReadAllText($hook) } else { $null }
+    if ($have -ceq $want) {
+        $hookState = 'already there'
+    } else {
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $hook) | Out-Null
+            [IO.File]::WriteAllText($hook, $want, [Text.Encoding]::ASCII)
+        } catch {
+            Stop-Setup "The update hook could not be written to ${hook}: $($_.Exception.Message)" `
+                'close any program using that file, then run this script again.'
+        }
+        $hookState = 'installed'
+    }
+    Write-Ok "$hookState`: .git\hooks\post-merge"
+} else {
+    Write-Host 'skipped (this copy has no .git folder; to update, download it again and run this script)'
+}
+
+# 5. `synthase` on the PATH, through a folder that holds only synthase.cmd, so
 #    the venv's own python and pip stay off the PATH.
 Write-Step 'Putting synthase on your PATH'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
@@ -187,7 +216,7 @@ if (Test-OnPath $userPath) {
 if (-not (Test-OnPath $env:Path)) { $env:Path = "$env:Path;$bin" }
 Write-Ok "$where`: $bin"
 
-# 5. Typing `synthase` in a new window must run synthase.cmd, not some other
+# 6. Typing `synthase` in a new window must run synthase.cmd, not some other
 #    program or command with the same name found first.
 Write-Step 'Checking what "synthase" runs in a new window'
 $sessionPath = $env:Path

@@ -68,7 +68,11 @@ def test_tool_files_and_samples_are_not_ignored(path):
 
 @pytest.mark.parametrize(
     ("path", "eol"),
-    [("scripts/setup.ps1", "crlf"), ("src/synthase/app.py", "lf")],
+    [
+        ("scripts/setup.ps1", "crlf"),
+        ("scripts/post-merge", "lf"),
+        ("src/synthase/app.py", "lf"),
+    ],
 )
 def test_line_endings(path, eol):
     assert attribute(path, "eol") == eol

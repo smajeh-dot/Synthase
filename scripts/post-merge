@@ -1,0 +1,19 @@
+#!/bin/sh
+# Git runs this after a `git pull` that brings in changes. It runs the setup
+# script again, so a new dependency or command is installed with the new code.
+# Design: docs/decisions/0021.
+#
+# scripts/setup.ps1 copies this file to .git/hooks/post-merge, so edit it here.
+# Keep it plain ASCII with LF line endings: Git for Windows runs it with sh,
+# which reads a CR as part of the command.
+
+# Inside braces, sh reads the whole hook before running any of it, so the setup
+# script can replace this file while it runs.
+{
+    printf '%s\n' 'Synthase: the pull brought in changes, so the setup script is running again.'
+    if ! powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/setup.ps1; then
+        printf '%s\n' 'Synthase: the code is updated, but setup failed. Fix the problem above, then run .\scripts\setup.ps1 again.'
+    fi
+    # The pull has already finished, so a failure here changes nothing.
+    exit 0
+}

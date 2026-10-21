@@ -69,14 +69,30 @@ Manuals: [fit check](docs/fit-manual.md), for checking a file of measurements be
 
 ## Updating after a change is merged
 
-1. Get the new code the way you usually do.
-2. Run the setup script again from the code folder. It's safe to run as often as you like:
+In a code folder made with `git clone`, one command does everything. Open PowerShell in the code folder and run:
+```powershell
+git pull
+```
+When the pull brings in changes, git runs the setup script for you, so any new dependency or command is installed with the new code. You'll see `Synthase: the pull brought in changes, so the setup script is running again.`, then the setup's own lines. If git says `Already up to date`, nothing changed and nothing runs. This works once you have run `.\scripts\setup.ps1` in that folder, which installs the git "hook" that does it ([how](docs/decisions/0021-update-with-git-pull.md)).
+
+If the setup fails during a pull, the code is still updated. Fix the problem it names, then run `.\scripts\setup.ps1` again. Close `synthase` in other windows before you pull: Windows won't let the setup replace a program that is running.
+
+**To get a clone,** once, instead of a ZIP download:
+1. Install Git for Windows, then open a **new** PowerShell window so it can find `git`:
    ```powershell
+   winget install --id Git.Git -e
+   ```
+2. Clone the code into a folder outside OneDrive, then run the setup script there:
+   ```powershell
+   New-Item -ItemType Directory -Force "$env:USERPROFILE\dev"
+   cd "$env:USERPROFILE\dev"
+   git clone https://github.com/smajeh-dot/Synthase.git
+   cd Synthase
    .\scripts\setup.ps1
    ```
 
-Most code changes work straight away, because Synthase is installed in "editable" mode (`-e`): `syn` runs the code in this folder directly. The script is only needed when a change adds a dependency or a new command, but running it every time does no harm.
+**A ZIP copy** has no git, so the setup script says it skipped the hook. To update it, download and unzip the code again, then run `.\scripts\setup.ps1` in the new folder.
 
 If PowerShell says running scripts is disabled, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once (see step 3 for what it means), then run the script again.
 
-**To take `syn` off your PATH:** Windows Settings → search "Edit environment variables for your account" → select **Path** → **Edit** → remove the line ending in `Synthase\bin` → **OK**. You can then delete that `Synthase` folder in `%LOCALAPPDATA%` too.
+**To take `synthase` off your PATH:** Windows Settings → search "Edit environment variables for your account" → select **Path** → **Edit** → remove the line ending in `Synthase\bin` → **OK**. You can then delete that `Synthase` folder in `%LOCALAPPDATA%` too.
