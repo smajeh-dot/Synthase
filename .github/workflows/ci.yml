@@ -158,6 +158,22 @@ jobs:
           if (-not $out.Contains('Synthase: the pull brought in changes')) { throw 'the hook did not run' }
           if ($out.Contains('setup failed') -or -not $out.Contains('Setup finished.')) { throw 'the hook ran, but the setup script did not finish' }
 
+      # An old launcher function named synthase in a profile must stop the
+      # setup, and the Fix: line must name the file it is in (#94). The space in
+      # the file name checks the quoting. Spaces and capitals are ignored in
+      # the comparison, in case the line wraps.
+      - name: setup names the profile file of a clashing function
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $profileFile = Join-Path $env:RUNNER_TEMP 'clash profile.ps1'
+          Set-Content -Path $profileFile -Value 'function synthase { "old launcher" }'
+          $out = powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ". '$profileFile'; & .\scripts\setup.ps1; exit `$LASTEXITCODE" 2>&1 | Out-String
+          $setupExit = $LASTEXITCODE
+          Write-Host $out
+          if ($setupExit -ne 1) { throw "the setup exited with $setupExit, not 1" }
+          $want = "Fix: remove or rename the function `"synthase`" in $profileFile (type notepad `"$profileFile`" to open it)"
+          if (-not ($out -replace '\s', '').ToLower().Contains(($want -replace '\s', '').ToLower())) { throw "the Fix: line does not name $profileFile" }
+
       # Scans only the new commits: the PR's own commits, or the commits just
       # pushed to main. Older history was scanned when it was new.
       - name: gitleaks (new commits only)
