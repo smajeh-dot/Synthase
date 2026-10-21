@@ -1,3 +1,5 @@
+> **Superseded by [0020](0020-clean-slate.md).** It describes the retired app.
+
 # 0015: The folder each kind of table is saved to
 
 ## Context

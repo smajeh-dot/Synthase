@@ -1,3 +1,5 @@
+> **Superseded by [0020](0020-clean-slate.md).** It describes the retired app.
+
 # 0014: The compound register, `syn compound add`, `show` and `list`
 
 ## Context
