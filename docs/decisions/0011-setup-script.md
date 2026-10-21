@@ -1,3 +1,5 @@
+> **Partly superseded by [0020](0020-clean-slate.md):** the setup script now wants Python 3.13 built for the laptop's own processor, not the x64 Python that RDKit needed.
+
 # 0011: The PowerShell setup script, for one laptop
 
 ## Context

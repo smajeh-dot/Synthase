@@ -229,8 +229,13 @@ if (-not $first) {
 }
 $target = if ($first.CommandType -eq 'Application') { $first.Source } else { "the PowerShell $($first.CommandType.ToString().ToLower()) named $($first.Name)" }
 if ($target -ne $appShim) {
-    Stop-Setup "In a new window, typing synthase runs $target instead of $appShim." `
-        'remove or rename that one (a PowerShell alias or function lives in your profile: type notepad $PROFILE to open it), then run this script again.'
+    $fix = 'remove or rename that one (a PowerShell alias or function lives in your profile: type notepad $PROFILE to open it), then run this script again.'
+    # A profile can be one of several files, so name the one the function is in.
+    if ($first.CommandType -eq 'Function' -and $first.ScriptBlock.File) {
+        $file = $first.ScriptBlock.File
+        $fix = "remove or rename the function `"$($first.Name)`" in $file (type notepad `"$file`" to open it), then run this script again."
+    }
+    Stop-Setup "In a new window, typing synthase runs $target instead of $appShim." $fix
 }
 Write-Ok $appShim
 

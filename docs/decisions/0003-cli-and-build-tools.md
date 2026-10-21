@@ -1,3 +1,5 @@
+> **Superseded by [0020](0020-clean-slate.md).** It describes the retired app.
+
 # 0003: Command-line parser and build tools
 
 ## Context

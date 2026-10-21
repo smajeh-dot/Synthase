@@ -11,8 +11,8 @@ Closes #
 ## How it was tested
 <!-- The hand-worked examples, plus the test output. -->
 
-## Config template changed?
-<!-- "No", or each value changed with its verification status. -->
+## Spec followed?
+<!-- Which docs/spec.md sections this builds, and any place it departs from the spec, with its decision record. Any wording not in the spec: was it approved by the owner? -->
 
 ## Windows check
 <!-- Are the PowerShell setup and run instructions still correct? -->

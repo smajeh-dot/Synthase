@@ -15,7 +15,7 @@ Every change follows one path: **one issue → one branch → one draft PR → t
 |---|---|
 | Code, tests, help text, docs | Plate reader exports, plate maps for real runs, results, figures |
 | **Invented** test data (hand-worked examples, generated fake plates) | The compound register, notebook entries, risk assessments, write-up, literature notes |
-| The config **template**, with placeholder values marked `UNVERIFIED` | The real config with verified values |
+| The feature spec, `docs/spec.md`, with the owner's name and personal paths removed | Anything from the owner's Synthase folder (`Documents\Synthase\`): projects, experiments, `settings.toml`, `models.toml` |
 
 Also never commit:
 - real names, the school's name, email addresses or other personal information
@@ -27,7 +27,7 @@ GitHub usernames and the Claude attribution lines in commits and PRs are fine. T
 Any real file the owner shares (for example a plate reader export) is format reference only. A committed copy must be a blank-plate export or hand-built with invented numbers.
 
 ## Session start
-1. **Know the issue.** If the owner named one, use it. If not, propose the next open issue in the current milestone (the lowest-numbered milestone that still has open issues) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (see Tracking).
+1. **Know the issue.** If the owner named one, use it. If not, propose the next issue in the build plan (the first open issue in the plan of the open parent issue, now #92) and **wait for a yes**. A "next step" in an old session note is not a yes. One session works on one issue. If no issue exists for the work, create it first (see Tracking).
 2. **Get onto the issue's branch** (see Branch names). Run `git fetch origin`, then:
    - If the issue's branch is already on GitHub (an earlier session started it), check it out and merge `origin/main` into it.
    - Otherwise create it from `origin/main`: `git checkout -b <name> origin/main`.
@@ -65,7 +65,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 - **Before every commit, run the hooks on the staged files:** `.venv/bin/pre-commit run`. They check ruff, secrets (gitleaks), files over 1 MB, trailing whitespace and end-of-file newlines.
   - If a hook fixes a file, review the fix and stage it again by name. If a hook blocks a file, fix the cause; never skip it with `--no-verify`.
   - The first run in a new container takes about a minute while the hooks install.
-- **Before every commit, review the staged changes:** `git diff --staged`, looking for rule-zero material (real names and the school's name included), debug leftovers, hard-coded scientific constants and files outside the issue's scope. Unstage and fix anything you find.
+- **Before every commit, review the staged changes:** `git diff --staged`, looking for rule-zero material (real names and the school's name included), debug leftovers, built-in scientific constants, command wording that isn't in the spec or approved by the owner, and files outside the issue's scope. Unstage and fix anything you find.
 - **Commit messages use Conventional Commits:** `type(scope): description`, in the imperative and under 72 characters.
   - Types: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`. The scope is the tool or area, e.g. `yield`, `plate`, `ci`.
   - Add a body explaining *why* when that isn't obvious.
@@ -74,7 +74,8 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 - **Push after every commit.** The cloud container is temporary.
 - **Open a draft PR after the first push.** Base `main`, Conventional title (it becomes the squash commit on `main`), body from the PR template (see Tracking).
 - **Stay in scope.** For a new bug or idea, search the existing issues, then open a new one. Don't fix it on this branch. If you already changed out-of-scope code, revert it from this branch and paste the diff into the new issue so nothing is lost. **Never create a branch for side work.**
-- **Follow the config rule.** Every scientific constant lives in the config, never in code.
+- **Follow the spec.** `docs/spec.md` defines every command and rule; the owner's later decisions at its top win. Synthase stores values exactly as typed and has no built-in scientific constants (spec C73, D25). Anything the spec leaves open goes to the owner; never invent behaviour.
+- **The owner owns the wording.** Command names, usage lines, help text and messages come from the spec or the owner, word for word. Where the spec has a gap, or a default the owner hasn't confirmed (C174 to C184), propose the wording in the triage's "Needs you" table and build it only once the owner approves it.
 
 ## Session end
 1. Make sure everything is committed and pushed. `git status` should show nothing except untracked files that rule zero keeps out. Name those files to the owner: they exist only in this container, so the owner should keep their own copies.
@@ -107,11 +108,8 @@ The owner wants to be held accountable for their own steps. Never assume they kn
 ## Merging, releases and tags: the owner's alone
 - **Never merge a PR, enable auto-merge, push to `main`, create a tag or create a release.**
 - When asked to "get it onto main", make the PR ready, give the link, and say the **Squash and merge** click is the owner's by project rule. The owner can change the rule by editing this skill.
-- For a release, prepare a PR titled `chore(release): vX.Y.Z` that bumps the version in `pyproject.toml`.
-- Versions and tags:
-  - **Milestone release:** M1 = `v0.1.0`, M2 = `v0.2.0`, and so on.
-  - **Fix between milestones:** bump the last number, e.g. `v0.1.1`.
-  - **Lab tag:** `lab-YYYY-MM-DD` on `main`, before real data is analysed for the write-up. The owner creates it on the GitHub website as a pre-release (see `owner-setup.md`).
+- **Versions are the owner's call.** Synthase stays at `v0.2.0` until the owner says otherwise. Never change the version in `pyproject.toml` or propose a version number unprompted.
+- When the owner asks for a release, prepare a PR titled `chore(release): vX.Y.Z`, with the number they chose, that bumps the version in `pyproject.toml`. The owner creates the tag and release on the GitHub website (see `owner-setup.md`).
 
 ## Tracking
 - **Templates are the only definition of the formats.** Never copy their sections into this skill.
@@ -122,12 +120,11 @@ The owner wants to be held accountable for their own steps. Never assume they kn
   - GitHub reads templates only from `main`, so a template change can only be tested on the website after it merges. Such a PR says `Part of #N` instead of `Closes #N`, so the issue stays open until the owner's website test passes. Claude then checks the test issue on GitHub and closes the issue as completed.
 - **Labels: use only this fixed set; never invent new ones.** Every issue gets one type and any flags. Add an area when the issue touches the app itself.
   - Type: `feature`, `bug`, `test`, `docs`, `infra`
-  - Area: `chemistry`, `microbiology`, `interface`, `data`
+  - Area: `chemistry`, `biology`, `interface`, `data`
   - Flags: `blocked`, `needs-verification`, `needs-decision`
-- **Milestones:** M0 Foundations, M1 Compound register, M2 Terminal interface, M3 Lab calculators and plate design, M4 Data pipeline, M5 Results and record keeping.
-  - Milestones are ordered phases with **no due dates**, because sessions happen whenever the owner has time.
-  - Work order comes from milestone order. Never set or suggest deadlines.
-- **`ROADMAP.md` holds the full feature list.** An item becomes an issue only when it's scheduled.
+- **No milestones.** Work order comes from the build plan: each feature (F1, F3, F4) has a parent issue whose plan lists its sub-issues in order. The next issue is the first open one in that plan. F1's plan is in #92.
+  - Sessions happen whenever the owner has time. Never set or suggest deadlines.
+- **`ROADMAP.md` lists the features in order; `docs/spec.md` describes them.** An item becomes an issue only when it's scheduled.
 - **Size limit:** one task per PR. Split it if it passes about 400 changed lines.
 
 ## If something leaked
@@ -148,7 +145,8 @@ A delete in a new commit is **not** a fix. History keeps the file, and on a publ
 | "`git add .` is fine, I know what changed" | Stage by name. Untracked lab files and `.env` sit in the same folder. |
 | "The work is finished, so no session note" | The note goes on the issue every session. |
 | "This real file makes a better test fixture" | Fixtures are invented data only. |
-| "The value is well known, so I'll hard-code it" | It goes in the config, marked `UNVERIFIED` until the owner verifies it. |
+| "The value is well known, so I'll hard-code it" | Synthase has no built-in constants. If the work seems to need one, it's a "Needs you" row. |
+| "This message reads better my way" | Wording comes from the spec or the owner, word for word. Propose a change; don't make it. |
 | "The owner said it's done, so it's done" | Check it on GitHub and say what you found. |
 | "They probably know they need to click merge" | End with the "Your turn" list anyway. |
 

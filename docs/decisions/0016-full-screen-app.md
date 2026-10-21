@@ -1,3 +1,5 @@
+> **Superseded by [0020](0020-clean-slate.md).** It describes the retired app.
+
 # 0016: The full-screen app, its look and the `synthase` command
 
 ## Context
