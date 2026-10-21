@@ -90,6 +90,12 @@ jobs:
       - name: pytest
         run: python -m pytest
 
+      # "Install the project" put a synthase.exe in the job's own Python. On
+      # ARM64 runners that Python is on the machine PATH, so a new window would
+      # run it instead of the shim, and the setup script rightly refuses that.
+      - name: Remove the job's own synthase
+        run: python -m pip uninstall --yes synthase-lab
+
       # Runs the setup script as the owner does, twice to check it's safe to
       # re-run. Design: docs/decisions/0011 and 0020.
       - name: setup script
