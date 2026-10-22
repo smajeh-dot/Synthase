@@ -10,9 +10,10 @@ import sys
 from dataclasses import dataclass, field
 
 import pytest
+from textual import constants
 from textual.content import Content
 
-from synthase import __version__, history
+from synthase import __version__, history, older_console
 from synthase.app import (
     FIRST_HINT,
     PLACEHOLDER,
@@ -506,5 +507,68 @@ def test_a_command_with_nothing_after_it_gets_no_space(project):
     async def steps(app, pilot):
         await type_in(pilot, "e", "x", "i", "tab")
         assert bar_value(app) == "exit"
+
+    run(steps)
+
+
+# The older console (#119, decision 0029)
+
+
+def screen(app):
+    """Every line of the screen as drawn, filters included."""
+    return [strip.text for strip in app.screen._compositor.render_strips()]
+
+
+def test_cp437_draws_ascii_and_keeps_the_real_symbols(home, monkeypatch):
+    monkeypatch.setattr(older_console, "output_encoding", lambda: "cp437")
+
+    async def steps(app, pilot):
+        app.say("success", "Done")
+        app.say("normal", "2.003 g ± 0.001")
+        await type_in(pilot, "e", "x", "tab")
+        drawn = screen(app)
+        assert "   + Done" in drawn[2]
+        assert "   2.003 g +/- 0.001" in drawn[3]
+        assert any("  |> exit   Leave Synthase (or press Ctrl+D)." in r for r in drawn)
+        assert drawn[-4].endswith(" Tab next | Enter chooses | keep typing to narrow -")
+        assert all(line.isascii() for line in drawn)
+
+    shown = run(steps, size=(80, 14))
+    # What was said keeps its symbols; only the drawing changed.
+    assert messages(shown)[-1] == ("normal", "2.003 g ± 0.001")
+
+
+def test_the_old_console_window_draws_ascii_and_windows_terminal_doesnt(
+    home, monkeypatch
+):
+    with monkeypatch.context() as old_window:
+        old_window.delenv("WT_SESSION")
+        old_window.setattr(older_console.sys, "platform", "win32")
+        assert run().app.ascii
+    assert not run().app.ascii
+
+
+def test_16_colours_use_the_synthase_16_theme(home, monkeypatch):
+    monkeypatch.setattr(constants, "COLOR_SYSTEM", "standard")
+
+    async def steps(app, pilot):
+        assert app.theme == "synthase-16"
+        await type_in(pilot, "e", "x", "tab")
+        rows = app.query_one("#matches").render()
+        current = rows.plain.splitlines()[0]
+        reversed_text = [
+            rows.plain[s.start : s.end] for s in rows.spans if "reverse" in str(s.style)
+        ]
+        assert reversed_text == [current]
+
+    run(steps)
+
+
+def test_full_colour_keeps_the_synthase_theme_and_no_reverse(home):
+    async def steps(app, pilot):
+        assert app.theme == "synthase"
+        await type_in(pilot, "e", "x", "tab")
+        rows = app.query_one("#matches").render()
+        assert not [s for s in rows.spans if "reverse" in str(s.style)]
 
     run(steps)
