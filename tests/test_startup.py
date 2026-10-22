@@ -27,6 +27,11 @@ def test_a_long_path_shortens_home_first_then_the_middle():
     assert shorten_path(long, 12, HOME) == "~\\…\\aspirin"
 
 
+def test_the_older_console_leaves_folders_out_with_three_dots():
+    long = "C:\\Users\\you\\Lab\\Year 13\\Chemistry\\aspirin"
+    assert shorten_path(long, 14, HOME, ellipsis="...") == "~\\...\\aspirin"
+
+
 def test_the_status_line_leads_with_the_context():
     startup = Startup(Path(FOLDER), FolderState.PROJECT, "Aspirin synthesis")
     line = status_line(startup, 118)
