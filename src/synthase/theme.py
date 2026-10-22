@@ -2,7 +2,7 @@
 
 Every token is used as ``$name`` in synthase.tcss and in content markup. The
 tokens and their contrast against the background are in
-docs/decisions/0016-full-screen-app.md; decision 0026 keeps them for F1.
+docs/decisions/0016-full-screen-app.md; decision 0027 keeps them for F1.
 """
 
 from textual.theme import Theme

@@ -1,7 +1,7 @@
 """Opening the folder Synthase was started in, and the status line it gives.
 
 The states, their wording and the order of the checks are in
-docs/decisions/0026-app-shell.md.
+docs/decisions/0027-app-shell.md.
 """
 
 from dataclasses import dataclass, field

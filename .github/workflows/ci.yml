@@ -114,7 +114,7 @@ jobs:
       # A new window gets its PATH from the registry only, so this step starts
       # from that, without the Python this job installed. It doesn't run
       # synthase, which opens the full-screen app; pytest drives the app
-      # headless instead (decision 0026).
+      # headless instead (decision 0027).
       - name: synthase works from a new window's PATH
         run: |
           $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'

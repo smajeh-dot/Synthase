@@ -2,7 +2,7 @@
 
 The app never shows a Python traceback on its own (spec C183). It writes the
 details here and asks whether to show them (owner decision D4). The layout is
-in docs/decisions/0026-app-shell.md.
+in docs/decisions/0027-app-shell.md.
 """
 
 import platform

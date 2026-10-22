@@ -1,6 +1,6 @@
 """The full-screen app: type ``synthase`` in PowerShell to open it.
 
-The layout, wording and keys are in docs/decisions/0026-app-shell.md. All
+The layout, wording and keys are in docs/decisions/0027-app-shell.md. All
 styling is in synthase.tcss and theme.py; nothing here names a colour.
 """
 

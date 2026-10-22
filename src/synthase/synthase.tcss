@@ -1,6 +1,6 @@
 /* The app's look. Every colour is a token from theme.py; nothing is styled in
    Python. Save this file while `synthase --dev` is running and the open app
-   updates. Design: docs/decisions/0026-app-shell.md. */
+   updates. Design: docs/decisions/0027-app-shell.md. */
 
 Screen {
     background: $background;

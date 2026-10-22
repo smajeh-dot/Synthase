@@ -1,4 +1,4 @@
-# 0026: The app shell: Textual, its layout and start-up
+# 0027: The app shell: Textual, its layout and start-up
 
 ## Context
 Decision 0020 made Synthase a full-screen app inside the PowerShell window, styled from the owner's design system, and left the library to be chosen when the shell was built (#100). The owner had the F1 screens designed in a Claude Design session on 2026-10-22. The design canvas and its handoff spec are kept outside the repo, as decision 0016's were. This record keeps what the build needs. The owner approved the layout and chose every default in #100's triage on 2026-10-22, including splitting the issue three ways to keep each PR near 400 lines.
