@@ -113,7 +113,7 @@ def test_help_and_a_typo_run_through_the_app(project):
 def test_the_welcome_line_and_the_first_hint(project):
     async def steps(app, pilot):
         assert app.query_one("#bar").border_title == FIRST_HINT
-        assert FIRST_HINT == " Tab completes · Ctrl+D exits "
+        assert FIRST_HINT == " Tab completes · ↑ ↓ history · Ctrl+D exits "
         assert app.query_one("#command").placeholder == PLACEHOLDER
         await typing("help")(app, pilot)
 
@@ -377,7 +377,7 @@ def test_with_no_project_no_log_file_is_written(home):
     )
 
 
-# Tab completion (#118, decision 0028)
+# Tab completion and up-arrow history (#118, decision 0028)
 
 
 def bar_value(app):
@@ -623,7 +623,10 @@ def test_ctrl_c_cancels_and_saves_nothing(project):
     shown = run(steps, app=(app := walking_app()))
     assert app.saved == []
     assert messages(shown)[-1] == ("cancel", "Cancelled. Nothing was saved.")
-    assert {f.name: f.read_bytes() for f in project.iterdir()} == before
+    after = {f.name: f.read_bytes() for f in project.iterdir()}
+    # The command line is kept in the up-arrow history; nothing else changed.
+    assert after.pop(".history") == b"exp create\n"
+    assert after == before
 
 
 def test_tab_and_ctrl_d_do_nothing_in_a_walk_through(project):
@@ -635,6 +638,20 @@ def test_tab_and_ctrl_d_do_nothing_in_a_walk_through(project):
         assert pop_up(app) is None
 
     run(steps, app=walking_app())
+
+
+def test_the_history_skips_answers_and_waits_in_a_walk_through(project):
+    async def steps(app, pilot):
+        await typing("help", "exp create")(app, pilot)
+        await type_in(pilot, "up")
+        assert bar_value(app) == ""
+        assert app.history.step is None
+        await typing("Invented title", "", "")(app, pilot)
+        await type_in(pilot, "up")
+        assert bar_value(app) == "exp create"
+
+    run(steps, app=walking_app())
+    assert (project / ".history").read_text("utf-8") == "help\nexp create\n"
 
 
 def test_a_failure_when_saving_asks_about_the_log(project):
@@ -733,3 +750,73 @@ def test_full_colour_keeps_the_synthase_theme_and_no_reverse(home):
         assert not [s for s in rows.spans if "reverse" in str(s.style)]
 
     run(steps)
+
+
+def test_up_and_down_step_through_the_history(home):
+    async def steps(app, pilot):
+        await typing("help", "exp show all")(app, pilot)
+        await type_in(pilot, "e", "x")
+        await type_in(pilot, "up")
+        assert bar_value(app) == "exp show all"
+        assert app.query_one("#bar").border_title == (
+            " history 1 of 2 · ↑ older · ↓ newer "
+        )
+        await type_in(pilot, "up", "up")
+        assert bar_value(app) == "help"
+        assert app.query_one("#bar").border_title == (
+            " history 2 of 2 · ↑ older · ↓ newer "
+        )
+        await type_in(pilot, "down")
+        assert bar_value(app) == "exp show all"
+        # Past the newest, the line being typed comes back.
+        await type_in(pilot, "down")
+        assert bar_value(app) == "ex"
+        assert app.query_one("#bar").border_title == ""
+
+    run(steps)
+    # With no project, nothing is written.
+    assert list(home.iterdir()) == []
+
+
+def test_typing_over_a_recalled_line_stops_the_stepping(home):
+    async def steps(app, pilot):
+        await typing("help")(app, pilot)
+        await type_in(pilot, "up", "space", "e")
+        assert bar_value(app) == "help e"
+        assert app.history.step is None
+        assert app.query_one("#bar").border_title != FIRST_HINT
+
+    run(steps)
+
+
+def test_the_history_comes_back_after_a_restart(project):
+    run(typing("help", "exp show all", "exp show all", "exit"))
+    assert (project / ".history").read_text("utf-8") == ("help\nexp show all\nexit\n")
+
+    async def steps(app, pilot):
+        await type_in(pilot, "up", "up")
+        assert bar_value(app) == "exp show all"
+        await type_in(pilot, "up")
+        assert bar_value(app) == "help"
+        assert app.query_one("#bar").border_title == (
+            " history 3 of 3 · ↑ older · ↓ newer "
+        )
+
+    run(steps)
+
+
+def test_answers_to_the_error_question_are_not_kept(project):
+    run(typing("exp export csv", "y"), app=failing_app())
+    assert (project / ".history").read_text("utf-8") == "exp export csv\n"
+
+
+def test_another_windows_project_history_is_left_alone(project, other_process):
+    (project / ".synthase.lock").write_text(str(other_process))
+
+    async def steps(app, pilot):
+        await typing("help")(app, pilot)
+        await type_in(pilot, "up")
+        assert bar_value(app) == "help"
+
+    run(steps)
+    assert not (project / ".history").exists()

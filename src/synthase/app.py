@@ -17,7 +17,15 @@ from textual.suggester import Suggester
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
-from synthase import __version__, error_log, lock, older_console, walkthrough
+from synthase import (
+    __version__,
+    command_history,
+    error_log,
+    lock,
+    older_console,
+    walkthrough,
+)
+from synthase.command_history import CommandHistory
 from synthase.commands import (
     COMMANDS,
     Call,
@@ -36,11 +44,10 @@ from synthase.walkthrough import Step, Walk, Walkthrough
 
 WELCOME = "type 'help' for commands"
 PLACEHOLDER = "Type a command, e.g. help"
-# Until the up-arrow history is built (#121), the first-open hint leaves out
-# its `↑ ↓ history` part, so it names no key that does nothing.
-FIRST_HINT = " Tab completes · Ctrl+D exits "
+FIRST_HINT = " Tab completes · ↑ ↓ history · Ctrl+D exits "
 TAB_HINT = " Tab completes "
 MATCHES_HINT = " Tab next · Enter chooses · keep typing to narrow "
+HISTORY_HINT = " history {step} of {count} · ↑ older · ↓ newer "
 MATCH_COUNT = " {count} matches "
 ONE_MATCH = " 1 match "
 MATCH_PLACE = " {place} of {count} "
@@ -295,6 +302,9 @@ class SynthaseApp(App):
         self.failure: Failure | None = None
         self.walk: Walk | None = None
         self.first_hint = True
+        self.history = CommandHistory()
+        # The line ↑ or ↓ last put in the bar, until it is typed over.
+        self.recalled: str | None = None
         # The pop-up's words and the current one, while it is open.
         self.matches: list[Completion] = []
         self.current = 0
@@ -321,6 +331,8 @@ class SynthaseApp(App):
         self.query_one("#command").focus()
         try:
             self.startup = open_folder()
+            if self.startup.locked:
+                self.history = CommandHistory(command_history.load(), saved=True)
         except Exception as error:
             self.startup = Startup(project_folder(), folder_state())
             self.draw_status()
@@ -361,15 +373,19 @@ class SynthaseApp(App):
         self.draw_status()
 
     def draw_title(self) -> None:
-        """The top rule's title: the question, the pop-up's keys, Tab for one
-        match, scrolled up, the first hint, or none."""
+        """The top rule's title: the question, the pop-up's keys, the history step,
+        Tab for one match, scrolled up, the first hint, or none."""
         bar = self.query_one("#bar")
         if self.asking:
             return
         output = self.query_one("#output", VerticalScroll)
         below = round(output.max_scroll_y - output.scroll_y)
+        step = self.history.step
         if self.matches:
             title = MATCHES_HINT
+        elif step is not None:
+            count = len(self.history.lines)
+            title = HISTORY_HINT.format(step=step, count=count)
         elif self.ghost(self.query_one("#command", Input).value):
             title = TAB_HINT
         elif below > 0:
@@ -394,9 +410,14 @@ class SynthaseApp(App):
             output.call_after_refresh(output.scroll_end, animate=False)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Typing narrows the pop-up."""
+        """Typing over a recalled line ends the stepping; typing narrows the pop-up."""
+        # The bar's value now, not the event's: ↑ pressed twice sends two events.
+        value = event.input.value
+        if self.recalled is not None and value != self.recalled:
+            self.recalled = None
+            self.history.stop()
         if self.matches:
-            self.matches = completions(event.input.value, self.sources)
+            self.matches = completions(value, self.sources)
             self.current = 0
             self.draw_matches()
         self.draw_title()
@@ -426,6 +447,7 @@ class SynthaseApp(App):
         self.draw_title()
         self.say("echo", text)
         try:
+            self.history.add(text)
             self.run_line(text)
         except Exception as error:
             words = text.split()
@@ -676,9 +698,23 @@ class SynthaseApp(App):
         self.close_matches()
 
     def action_step(self, direction: int) -> None:
-        """↑ and ↓ move through the pop-up while it is open."""
+        """↑ and ↓: move through the pop-up while it is open, else the history."""
+        if self.asking:
+            return
         if self.matches:
             self.action_complete(direction)
+            return
+        command = self.query_one("#command", Input)
+        if direction < 0:
+            line = self.history.older(command.value)
+        else:
+            line = self.history.newer()
+        if line is None:
+            return
+        self.recalled = line
+        command.value = line
+        command.cursor_position = len(line)
+        self.draw_title()
 
     def action_scroll_output(self, direction: int) -> None:
         output = self.query_one("#output", VerticalScroll)
