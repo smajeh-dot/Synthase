@@ -1,6 +1,6 @@
 ---
 name: issue
-description: Use when the owner says "let's work on issue #N", "pick up #N", "triage #N" or "/issue N", or otherwise names a GitHub issue to start work on in this repo.
+description: Use when the owner says "let's work on issue #N", "pick up #N", "triage #N" or "/issue N", or otherwise names a GitHub issue to start work on in this repo, and whenever the owner makes a decision that could change issues already open.
 argument-hint: [issue-number]
 allowed-tools: Bash(gh api *) Bash(git fetch *) Bash(git branch *) Bash(git log *) Bash(git ls-tree *) Bash(git rev-list *) Bash(git status *) Bash(python -m pytest *) Bash(ruff check *) Bash(python -m venv *) Bash(.venv/bin/*) Read Grep Glob
 ---
@@ -101,30 +101,42 @@ Produce these sections, in this order, in plain text with no emojis:
 
 ### What goes in "Needs you"
 
-Anything that depends on the owner's judgement, knowledge or access. Check every
-category:
+The table holds the choices the owner makes better than Claude: what Synthase
+looks like and says to the person using it, and what only the owner knows or can
+reach. Every row is one of these kinds:
 
-- **Scientific values:** any constant, unit list, threshold or model formula the
-  work seems to need. Synthase has no built-in constants (spec C73), so it comes
-  from the spec or the owner, never from Claude's own knowledge.
+- **Wording:** command names, usage lines, prompts, help text, messages and
+  explanations of jargon. Wording the spec gives is used word for word and needs
+  no row. Anything else, or a spec default the owner hasn't confirmed (C174 to
+  C184), gets a row with the proposed wording in it, so the owner can approve it now.
+- **Look:** layout, colours, table shape and what the screen shows. Put a sample
+  of the output in the row. If the look needs several rounds of feedback, plan a
+  checkpoint with the owner before the goal is set.
+- **What the user meets** that the spec and the issue leave open: what a command
+  does, asks or refuses, described as the user would see it. This includes
+  contradictions between the issue, its comments and the code, and anything
+  labelled `needs-decision`.
+- **Scientific values:** a constant, unit list, threshold or model formula the
+  work needs. Synthase has no built-in constants (spec C73), so it comes from the
+  spec or the owner, never from Claude's own knowledge.
 - **Real lab file formats:** if the work reads a lab file, ask for a blank-plate
   export or a description of the format. Never ask for real data.
-- **Terminal look and wording:** layout, colours, table shape, command names,
-  usage lines, help text, error messages, explanations of jargon. Wording the spec
-  gives is used word for word; anything else, or a spec default the owner hasn't
-  confirmed (C174 to C184), gets the proposed wording or a sample of the output
-  in the row itself, so the owner can approve it now. If the look needs
-  several rounds of feedback, plan a checkpoint with the owner before the goal is set.
-- **Scope and behaviour** the issue leaves open, contradictions between the issue,
-  comments and code, and anything labelled `needs-decision`.
 - **Windows checks:** anything that must be run on the owner's laptop in PowerShell
   (sessions run on Linux).
+
+Coding decisions are Claude's: how the code is structured, which library to use,
+file layout, internal names, how errors are handled inside the code, how it is
+tested. Make them, and name any that matter in the Plan.
+
+Keep a row only when both are true: the owner's answer changes what they see or
+use (or supplies something only they have), and the owner could reasonably choose
+something other than the default. Any other row comes out, and Claude uses its default.
 
 Owner actions on the GitHub website (merging, deleting branches, settings) go in
 the "Your turn" list, not in this table.
 
-Give every row a default so the owner can reply "use your defaults". If no
-category applies, write *Nothing. This can run autonomously.*
+Give every row a default so the owner can reply "use your defaults". If no row is
+left, write *Nothing. This can run autonomously.*
 
 ### Writing the `/goal` line
 
@@ -160,3 +172,23 @@ item found while gathering, and always includes:
   "go step by step".
 
 Then end the turn. Don't edit, commit or push anything until the owner replies.
+
+## After an owner decision
+
+Whenever the owner decides something, in the triage or later in the session, that
+could change an issue already open:
+
+1. Record it in `docs/decisions/` (see the `github-workflow` skill).
+2. List the open issues:
+   `gh api "$R/issues?state=open&per_page=100" --jq '.[] | select(.pull_request | not) | "#\(.number) \(.title)"'`.
+   Read each one the decision could touch: the later steps of the same build plan
+   (#92 for F1), issues the decision names, and issues using the same commands,
+   files or wording.
+3. Edit each affected issue so it matches the decision: its title, "Done when",
+   "Out of scope" and Notes. Write the new body to a file in Claude's scratchpad,
+   then `gh api -X PATCH $R/issues/<M> -F body=@<file>`.
+4. Comment on each edited issue: what changed, and which decision record caused it.
+5. Tell the owner which issues changed, one line each, and list them under "Done"
+   in the session note.
+
+If the decision changes no open issue, say so in one line.

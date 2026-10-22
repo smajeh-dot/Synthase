@@ -21,6 +21,7 @@ Also never commit:
 - real names, the school's name, email addresses or other personal information
 - tokens, keys or `.env` files
 - files over 1 MB
+- hand-off or briefing notes written for another Claude session. Never write them inside the repo folder either: keep them in the chat or in Claude's scratchpad.
 
 GitHub usernames and the Claude attribution lines in commits and PRs are fine. They show who did what.
 
@@ -75,7 +76,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
 - **Open a draft PR after the first push.** Base `main`, Conventional title (it becomes the squash commit on `main`), body from the PR template (see Tracking).
 - **Stay in scope.** For a new bug or idea, search the existing issues, then open a new one. Don't fix it on this branch. If you already changed out-of-scope code, revert it from this branch and paste the diff into the new issue so nothing is lost. **Never create a branch for side work.**
 - **Follow the spec.** `docs/spec.md` defines every command and rule; the owner's later decisions at its top win. Synthase stores values exactly as typed and has no built-in scientific constants (spec C73, D25). Anything the spec leaves open goes to the owner; never invent behaviour.
-- **The owner owns the wording.** Command names, usage lines, help text and messages come from the spec or the owner, word for word. Where the spec has a gap, or a default the owner hasn't confirmed (C174 to C184), propose the wording in the triage's "Needs you" table and build it only once the owner approves it.
+- **The owner owns the wording.** Command names, usage lines, help text and messages come from the spec or the owner, word for word. Where the spec has a gap, or a default the owner hasn't confirmed (C174 to C184), propose the wording in the triage's "Needs you" table and build it only once the owner approves it. That table is for what the owner sees and uses; coding decisions are Claude's to make (see the `issue` skill).
 
 ## Session end
 1. Make sure everything is committed and pushed. `git status` should show nothing except untracked files that rule zero keeps out. Name those files to the owner: they exist only in this container, so the owner should keep their own copies.
@@ -89,7 +90,7 @@ Examples: `claude/feat/6-compound-register`, `claude/fix/14-dmso-check-rounding`
    Next step: …
    Waiting on owner: … (or "nothing")
    ```
-5. Make sure every decision made during the session is recorded in `docs/decisions/NNNN-short-title.md`, with three parts: Context, Decision, Consequences. Write each one when the decision is made, not at the end.
+5. Make sure every decision made during the session is recorded in `docs/decisions/NNNN-short-title.md`, with three parts: Context, Decision, Consequences. Write each one when the decision is made, not at the end. Then update the open issues it affects (see "After an owner decision" in the `issue` skill).
 6. Tell the owner in chat: the PR link, then a nudge for every item waiting on them (see Working with the owner).
 
 ## Working with the owner
@@ -146,6 +147,9 @@ A delete in a new commit is **not** a fix. History keeps the file, and on a publ
 | "The work is finished, so no session note" | The note goes on the issue every session. |
 | "This real file makes a better test fixture" | Fixtures are invented data only. |
 | "The value is well known, so I'll hard-code it" | Synthase has no built-in constants. If the work seems to need one, it's a "Needs you" row. |
+| "I'll save the hand-off note in the repo so the next session finds it" | Hand-off and briefing notes never go in the repo folder. Keep them in the chat or Claude's scratchpad. |
+| "This decision only touches the issue I'm on" | Check the open issues it could change and update them (see the `issue` skill). |
+| "I'll ask the owner which way to write the code" | Coding decisions are Claude's. "Needs you" is for what the owner sees and uses. |
 | "This message reads better my way" | Wording comes from the spec or the owner, word for word. Propose a change; don't make it. |
 | "The owner said it's done, so it's done" | Check it on GitHub and say what you found. |
 | "They probably know they need to click merge" | End with the "Your turn" list anyway. |
