@@ -8,7 +8,7 @@ first. Nothing here prints anything; the app (#100) shows what comes back.
 """
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import groupby
 
@@ -319,20 +319,83 @@ def dispatch(line: str, handlers: Mapping[tuple[str, ...], Handler]) -> str:
         return str(error)
 
 
-def complete(line: str) -> list[str]:
-    """Command words that could finish the word being typed at the end of ``line``.
+# What Tab can offer for a part typed after the command words, by Arg.name: a
+# function given the words before it. Later issues add IDs, value names and
+# fields (#104 onwards).
+Source = Callable[[tuple[str, ...]], Iterable[str]]
 
-    Only command words come from the table; IDs and names come with the
-    commands that store them.
+
+@dataclass(frozen=True)
+class Completion:
+    """One word Tab can offer: the word, what it is, and whether more can follow.
+
+    ``about`` is a whole command's help line, a first word's help heading, or
+    empty for a part such as an ID.
+    """
+
+    word: str
+    about: str = ""
+    more: bool = False
+
+
+def _word_args(words: tuple[str, ...]) -> list[tuple[Arg, bool]]:
+    """The parts that could be typed next, after ``words``, and if more can follow.
+
+    Only parts read as one word count; a value line's ``+/-`` and ``#`` don't.
+    """
+    found = []
+    for command in COMMANDS:
+        size = len(command.words)
+        if words[:size] != command.words:
+            continue
+        args = [a for a in command.args if a.read == "word"]
+        position = len(words) - size
+        if position < len(args):
+            more = position < len(command.args) - 1
+            found.append((args[position], more))
+    return found
+
+
+def completions(
+    line: str, sources: Mapping[str, Source] | None = None
+) -> list[Completion]:
+    """What could finish the word being typed at the end of ``line``.
+
+    Command words come from the table; IDs and names come from ``sources``,
+    which the commands that store them fill in.
     """
     words = line.split()
     if line and not line[-1].isspace():
         typed = words.pop()
     else:
         typed = ""
+    found: dict[str, Completion] = {}
     if words in ([], ["help"]):
-        options = COMMAND_WORDS
+        for word in COMMAND_WORDS:
+            forms = _forms(word)
+            whole = [c for c in forms if c.words == (word,)]
+            about = whole[0].help if whole else forms[0].group
+            more = not words and (len(forms) > 1 or bool(forms[0].args))
+            found[word] = Completion(word, about, more)
     else:
-        n = len(words)
-        options = sorted({c.words[n] for c in _forms(*words) if len(c.words) > n})
-    return [o for o in options if o.startswith(typed)]
+        before = tuple(words)
+        n = len(before)
+        for command in _forms(*before):
+            if len(command.words) <= n:
+                continue
+            full = command.words[: n + 1]
+            forms = _forms(*full)
+            whole = [c for c in forms if c.words == full]
+            about = whole[0].help if whole else ""
+            more = len(forms) > 1 or any(c.args for c in whole)
+            found.setdefault(full[n], Completion(full[n], about, more))
+        for arg, more in _word_args(before):
+            source = (sources or {}).get(arg.name)
+            for word in source(before) if source else ():
+                found.setdefault(word, Completion(word, "", more))
+    return [found[w] for w in sorted(found) if w.startswith(typed)]
+
+
+def complete(line: str, sources: Mapping[str, Source] | None = None) -> list[str]:
+    """The words that could finish the word being typed at the end of ``line``."""
+    return [c.word for c in completions(line, sources)]

@@ -2,7 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from synthase.commands import COMMANDS, CommandError, complete, dispatch, parse
+from synthase.commands import (
+    COMMANDS,
+    CommandError,
+    Completion,
+    complete,
+    completions,
+    dispatch,
+    parse,
+)
 from synthase.suggest import suggestion
 
 DECISION = (
@@ -209,6 +217,39 @@ def test_tab_completes_command_words():
     assert complete("exp show ") == ["all"]
     assert complete("help p") == ["project"]
     assert complete("value add m_") == []
+
+
+def test_each_match_says_what_it_is():
+    # A whole command shows its help line; a first word alone, its help heading.
+    assert completions("ex") == [
+        Completion("exit", "Leave Synthase (or press Ctrl+D)."),
+        Completion("exp", "Experiments", more=True),
+    ]
+    assert completions("exp show a") == [Completion("all", "List every experiment.")]
+    assert completions("hel") == [
+        Completion("help", "List the commands, or every form of one.", more=True)
+    ]
+    # `help exp` is whole, so nothing more follows the topic.
+    assert completions("help ex")[1] == Completion("exp", "Experiments")
+
+
+def test_ids_and_names_come_from_sources():
+    seen = []
+
+    def ids(words):
+        seen.append(words)
+        return ["C002", "C001"]
+
+    sources = {"id": ids, "field": lambda words: ["formula", "molar_mass"]}
+    assert complete("compound show ", sources) == ["C001", "C002", "all"]
+    assert seen == [("compound", "show")]
+    assert complete("compound show C001 m", sources) == ["molar_mass"]
+    assert complete("compound edit C", sources) == ["C001", "C002"]
+    # An ID can be followed by a field; a field is last.
+    assert completions("compound show C001", sources)[0].more
+    assert not completions("compound show C001 f", sources)[0].more
+    # A part with no source offers nothing.
+    assert complete("value show ", sources) == []
 
 
 # Spec Section 3, with `compound show` standing in for `fetch` and

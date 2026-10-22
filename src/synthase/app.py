@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, HorizontalGroup, Vertical, VerticalScroll
 from textual.content import Content
+from textual.suggester import Suggester
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
@@ -22,6 +23,9 @@ from synthase.commands import (
     Call,
     Command,
     CommandError,
+    Completion,
+    Source,
+    completions,
     help_forms,
     parse,
 )
@@ -31,8 +35,16 @@ from synthase.theme import SYNTHASE
 
 WELCOME = "type 'help' for commands"
 PLACEHOLDER = "Type a command, e.g. help"
-# Until #118 adds Tab and history, the first-open hint names only Ctrl+D.
-FIRST_HINT = " Ctrl+D exits "
+# Until the up-arrow history is built (#121), the first-open hint leaves out
+# its `↑ ↓ history` part, so it names no key that does nothing.
+FIRST_HINT = " Tab completes · Ctrl+D exits "
+TAB_HINT = " Tab completes "
+MATCHES_HINT = " Tab next · Enter chooses · keep typing to narrow "
+MATCH_COUNT = " {count} matches "
+ONE_MATCH = " 1 match "
+MATCH_PLACE = " {place} of {count} "
+# The pop-up shows this many matches at a time.
+MATCH_ROWS = 8
 SCROLLED = " scrolled up · {count} newer {lines} below · PgDn to go back down "
 ANSWERING = "Answering {command}"
 ANSWER_HINT = " · Enter means no · Ctrl+C cancels "
@@ -196,6 +208,41 @@ class ErrorLog(Vertical):
         yield Static(self.entry, classes="log", markup=False)
 
 
+class Matches(Static):
+    """The pop-up above the bar: the words Tab can offer, ▸ on the current one."""
+
+    def show(self, options: list[Completion], current: int) -> None:
+        count = len(options)
+        self.border_title = ONE_MATCH if count == 1 else MATCH_COUNT.format(count=count)
+        self.border_subtitle = MATCH_PLACE.format(place=current + 1, count=count)
+        first = max(current - MATCH_ROWS + 1, 0)
+        width = max(len(o.word) for o in options)
+        rows = []
+        for number, option in enumerate(options[first : first + MATCH_ROWS], first):
+            here = number == current
+            word = option.word.ljust(width)
+            rows.append(
+                Content.assemble(
+                    ("▸ " if here else "  ", "$accent"),
+                    (word, "bold $accent" if here else "$accent"),
+                    (f"   {option.about}" if option.about else "", "$muted"),
+                )
+            )
+        self.update(Content("\n").join(rows))
+        self.add_class("-open")
+
+
+class Ghost(Suggester):
+    """The faint rest of the word when Tab has exactly one to offer."""
+
+    def __init__(self, app: "SynthaseApp") -> None:
+        super().__init__(use_cache=False, case_sensitive=True)
+        self.owner = app
+
+    async def get_suggestion(self, value: str) -> str | None:
+        return self.owner.ghost(value)
+
+
 @dataclass
 class Failure:
     """An unexpected error waiting for the answer to `Failed. …? [y/n]`."""
@@ -215,8 +262,11 @@ class SynthaseApp(App):
         Binding("pagedown", "scroll_output(1)", show=False),
         Binding("ctrl+c", "clear_line", show=False, priority=True),
         Binding("ctrl+d", "leave", show=False, priority=True),
-        # Until #118, Tab does nothing rather than move the focus off the bar.
-        Binding("tab,shift+tab", "nothing", show=False, priority=True),
+        Binding("tab", "complete(1)", show=False, priority=True),
+        Binding("shift+tab", "complete(-1)", show=False, priority=True),
+        Binding("up", "step(-1)", show=False),
+        Binding("down", "step(1)", show=False),
+        Binding("escape", "close_matches", show=False),
     ]
 
     def __init__(self, watch_css: bool = False) -> None:
@@ -227,16 +277,27 @@ class SynthaseApp(App):
         self.startup = Startup(project_folder(), FolderState.NO_PROJECT)
         # What each data command does; later issues add theirs (#101 onwards).
         self.handlers: dict[tuple[str, ...], Handler] = {}
+        # What Tab offers for IDs and names, by Arg.name (#104 onwards).
+        self.sources: dict[str, Source] = {}
         self.failure: Failure | None = None
         self.first_hint = True
+        # The pop-up's words and the current one, while it is open.
+        self.matches: list[Completion] = []
+        self.current = 0
 
     def compose(self) -> ComposeResult:
         yield VerticalScroll(Welcome(), id="output")
         with Vertical(id="bottom"):
+            yield Matches(id="matches")
             with Vertical(id="bar"):
                 with HorizontalGroup(id="line"):
                     yield Label("> ", id="prompt", markup=False)
-                    yield Input(placeholder=PLACEHOLDER, id="command", compact=True)
+                    yield Input(
+                        placeholder=PLACEHOLDER,
+                        id="command",
+                        compact=True,
+                        suggester=Ghost(self),
+                    )
             yield Static(id="status")
 
     def on_mount(self) -> None:
@@ -270,13 +331,18 @@ class SynthaseApp(App):
         self.draw_status()
 
     def draw_title(self) -> None:
-        """The top rule's title: the question, scrolled up, the first hint or none."""
+        """The top rule's title: the question, the pop-up's keys, Tab for one
+        match, scrolled up, the first hint, or none."""
         bar = self.query_one("#bar")
         if self.failure is not None:
             return
         output = self.query_one("#output", VerticalScroll)
         below = round(output.max_scroll_y - output.scroll_y)
-        if below > 0:
+        if self.matches:
+            bar.border_title = MATCHES_HINT
+        elif self.ghost(self.query_one("#command", Input).value):
+            bar.border_title = TAB_HINT
+        elif below > 0:
             lines = "line" if below == 1 else "lines"
             bar.border_title = SCROLLED.format(count=below, lines=lines)
         else:
@@ -296,10 +362,21 @@ class SynthaseApp(App):
         if following:
             output.call_after_refresh(output.scroll_end, animate=False)
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Typing narrows the pop-up."""
+        if self.matches:
+            self.matches = completions(event.input.value, self.sources)
+            self.current = 0
+            self.draw_matches()
+        self.draw_title()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.failure is not None:
             event.input.clear()
             self.answer_failure(event.value)
+            return
+        if self.matches:
+            self.fill(self.matches[self.current])
             return
         text = event.value.strip()
         event.input.clear()
@@ -412,8 +489,10 @@ class SynthaseApp(App):
         self.draw_title()
 
     def action_clear_line(self) -> None:
-        """Ctrl+C clears the line; on the error question it also means no."""
+        """Ctrl+C clears the line and closes the pop-up; on the error question it
+        also means no."""
         command = self.query_one("#command", Input)
+        self.close_matches()
         if self.failure is not None:
             command.clear()
             self.answer_failure("")
@@ -424,8 +503,61 @@ class SynthaseApp(App):
         if self.failure is None:
             self.exit()
 
-    def action_nothing(self) -> None:
-        pass
+    def ghost(self, line: str) -> str | None:
+        """The line with the rest of its last word, when Tab has only that to offer."""
+        if self.matches or self.failure is not None or not line or line[-1] == " ":
+            return None
+        options = completions(line, self.sources)
+        typed = line.split()[-1]
+        if len(options) != 1 or options[0].word == typed:
+            return None
+        return line + options[0].word.removeprefix(typed)
+
+    def action_complete(self, direction: int) -> None:
+        """Tab: one match fills the word, several open the pop-up, which Tab cycles."""
+        if self.failure is not None:
+            return
+        if self.matches:
+            self.current = (self.current + direction) % len(self.matches)
+            self.draw_matches()
+            return
+        options = completions(self.query_one("#command", Input).value, self.sources)
+        if len(options) == 1:
+            self.fill(options[0])
+        elif options:
+            self.matches = options
+            self.current = 0 if direction > 0 else len(options) - 1
+            self.draw_matches()
+            self.draw_title()
+
+    def fill(self, option: Completion) -> None:
+        """Put a word in place of the one being typed; the line is not run."""
+        self.close_matches()
+        command = self.query_one("#command", Input)
+        line = command.value
+        if line and not line[-1].isspace():
+            line = line[: len(line) - len(line.split()[-1])]
+        command.value = line + option.word + (" " if option.more else "")
+        command.cursor_position = len(command.value)
+
+    def draw_matches(self) -> None:
+        if self.matches:
+            self.query_one("#matches", Matches).show(self.matches, self.current)
+        else:
+            self.close_matches()
+
+    def close_matches(self) -> None:
+        self.matches = []
+        self.query_one("#matches", Matches).remove_class("-open")
+        self.draw_title()
+
+    def action_close_matches(self) -> None:
+        self.close_matches()
+
+    def action_step(self, direction: int) -> None:
+        """↑ and ↓ move through the pop-up while it is open."""
+        if self.matches:
+            self.action_complete(direction)
 
     def action_scroll_output(self, direction: int) -> None:
         output = self.query_one("#output", VerticalScroll)
