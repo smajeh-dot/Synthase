@@ -163,7 +163,7 @@ def test_a_folder_with_no_project(home):
 def test_a_data_folder_that_isnt_synthases_is_left_alone(home):
     (home / "data").mkdir()
     (home / "data" / "results.csv").write_text("invented\n")
-    shown = run(typing("help exp", "exp show"))
+    shown = run(typing("help exp", "exp show"), size=(200, 50))
     assert messages(shown)[0] == ("error", FOREIGN)
     assert len(shown.of(HelpForms)) == 1
     assert messages(shown)[-1] == ("error", FOREIGN)
