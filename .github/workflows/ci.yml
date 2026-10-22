@@ -112,7 +112,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # A new window gets its PATH from the registry only, so this step starts
-      # from that, without the Python this job installed.
+      # from that, without the Python this job installed. It doesn't run
+      # synthase, which opens the full-screen app; pytest drives the app
+      # headless instead (decision 0027).
       - name: synthase works from a new window's PATH
         run: |
           $bin = Join-Path $env:LOCALAPPDATA 'Synthase\bin'
@@ -123,8 +125,6 @@ jobs:
           $app = (Get-Command synthase).Source
           if ($app -ne (Join-Path $bin 'synthase.cmd')) { throw "synthase resolved to $app" }
           if (Get-Command syn -ErrorAction SilentlyContinue) { throw 'the retired syn command is still on the PATH' }
-          synthase
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # After two setup runs: one post-merge hook, the same as the template
       # with LF endings, and the stand-in pre-commit hook unchanged.
