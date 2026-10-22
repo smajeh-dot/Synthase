@@ -94,10 +94,13 @@ def _broken_file() -> tuple[str, str] | None:
     return None
 
 
-def status_line(startup: Startup, width: int, context: str | None = None) -> Content:
+def status_line(
+    startup: Startup, width: int, context: str | None = None, ellipsis: str = ELLIPSIS
+) -> Content:
     """The status line, its folder shortened to fit ``width`` cells.
 
     ``context`` is the open experiment's ID, shown after the project's name.
+    ``ellipsis`` stands for the folders left out (``...`` on the older console).
     """
     parts: list[Content] = []
     if startup.name is not None:
@@ -113,14 +116,16 @@ def status_line(startup: Startup, width: int, context: str | None = None) -> Con
     fixed = sum(len(p) for p in parts) + len(tail) + len(SEPARATOR) * len(parts)
     if tail:
         fixed += len(SEPARATOR)
-    folder = shorten_path(str(startup.folder), width - fixed)
+    folder = shorten_path(str(startup.folder), width - fixed, ellipsis=ellipsis)
     parts.append(Content.styled(folder, "$muted"))
     if tail:
         parts.append(tail)
     return Content.styled(SEPARATOR, "$faint").join(parts)
 
 
-def shorten_path(path: str, room: int, home: str | None = None) -> str:
+def shorten_path(
+    path: str, room: int, home: str | None = None, ellipsis: str = ELLIPSIS
+) -> str:
     """``path`` as it is if it fits in ``room`` cells, otherwise shortened.
 
     First the home folder becomes ``~``, then middle folders become ``…``,
@@ -139,7 +144,7 @@ def shorten_path(path: str, room: int, home: str | None = None) -> str:
         return path
     head, middle, last = parts[0], parts[1:-1], parts[-1]
     for keep in range(len(middle) - 1, -1, -1):
-        shorter = sep.join([head, *middle[:keep], ELLIPSIS, last])
+        shorter = sep.join([head, *middle[:keep], ellipsis, last])
         if len(shorter) <= room:
             return shorter
-    return sep.join([head, ELLIPSIS, last])
+    return sep.join([head, ellipsis, last])
