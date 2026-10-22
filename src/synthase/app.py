@@ -17,7 +17,7 @@ from textual.suggester import Suggester
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
-from synthase import __version__, error_log, lock
+from synthase import __version__, error_log, lock, older_console
 from synthase.commands import (
     COMMANDS,
     Call,
@@ -29,9 +29,9 @@ from synthase.commands import (
     help_forms,
     parse,
 )
-from synthase.startup import Startup, open_folder, status_line
+from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
 from synthase.storage import FolderState, folder_state, project_folder
-from synthase.theme import SYNTHASE
+from synthase.theme import SYNTHASE, SYNTHASE_16
 
 WELCOME = "type 'help' for commands"
 PLACEHOLDER = "Type a command, e.g. help"
@@ -81,7 +81,7 @@ class Message(HorizontalGroup):
     def compose(self) -> ComposeResult:
         if GLYPHS[self.kind]:
             yield Label(GLYPHS[self.kind], classes="glyph", markup=False)
-        yield Static(self.body, classes="body")
+        yield Static(self.app.drawn(self.body), classes="body")
 
 
 class Welcome(HorizontalGroup):
@@ -205,7 +205,7 @@ class ErrorLog(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Heading(error_log.HEADING, self.file)
-        yield Static(self.entry, classes="log", markup=False)
+        yield Static(self.app.drawn(self.entry), classes="log", markup=False)
 
 
 class Matches(Static):
@@ -221,13 +221,15 @@ class Matches(Static):
         for number, option in enumerate(options[first : first + MATCH_ROWS], first):
             here = number == current
             word = option.word.ljust(width)
-            rows.append(
-                Content.assemble(
-                    ("▸ " if here else "  ", "$accent"),
-                    (word, "bold $accent" if here else "$accent"),
-                    (f"   {option.about}" if option.about else "", "$muted"),
-                )
+            row = Content.assemble(
+                ("▸ " if here else "  ", "$accent"),
+                (word, "bold $accent" if here else "$accent"),
+                (f"   {option.about}" if option.about else "", "$muted"),
             )
+            # With 16 colours, bold alone may not show which row is current.
+            if here and self.app.sixteen:
+                row = row.stylize("reverse")
+            rows.append(row)
         self.update(Content("\n").join(rows))
         self.add_class("-open")
 
@@ -271,9 +273,14 @@ class SynthaseApp(App):
 
     def __init__(self, watch_css: bool = False) -> None:
         super().__init__(watch_css=watch_css)
+        # The older console, decided once (decision 0029).
+        self.ascii = older_console.needs_ascii(older_console.output_encoding())
+        self.ascii_filter = older_console.Ascii()
+        self.sixteen = older_console.has_16_colours(self.console.color_system)
+        theme = SYNTHASE_16 if self.sixteen else SYNTHASE
         # Before the stylesheet is read, so its $tokens resolve.
-        self.register_theme(SYNTHASE)
-        self.theme = SYNTHASE.name
+        self.register_theme(theme)
+        self.theme = theme.name
         self.startup = Startup(project_folder(), FolderState.NO_PROJECT)
         # What each data command does; later issues add theirs (#101 onwards).
         self.handlers: dict[tuple[str, ...], Handler] = {}
@@ -323,9 +330,25 @@ class SynthaseApp(App):
         if self.startup.locked:
             lock.release()
 
+    def get_line_filters(self):
+        """Textual's own filters, then ASCII for each symbol on the older console."""
+        filters = list(super().get_line_filters())
+        return [*filters, self.ascii_filter] if self.ascii else filters
+
+    def drawn(self, text: str | Content) -> str | Content:
+        """Text as this console draws it: on the older console, each symbol longer
+        than its ASCII form is spelt out before the text is laid out."""
+        if not self.ascii:
+            return text
+        if isinstance(text, Content):
+            return older_console.content(text)
+        return older_console.words(text)
+
     def draw_status(self) -> None:
         status = self.query_one("#status", Static)
-        status.update(status_line(self.startup, max(self.size.width - 2, 20)))
+        width = max(self.size.width - 2, 20)
+        line = status_line(self.startup, width, ellipsis=self.drawn(ELLIPSIS))
+        status.update(self.drawn(line))
 
     def on_resize(self) -> None:
         self.draw_status()
@@ -339,14 +362,15 @@ class SynthaseApp(App):
         output = self.query_one("#output", VerticalScroll)
         below = round(output.max_scroll_y - output.scroll_y)
         if self.matches:
-            bar.border_title = MATCHES_HINT
+            title = MATCHES_HINT
         elif self.ghost(self.query_one("#command", Input).value):
-            bar.border_title = TAB_HINT
+            title = TAB_HINT
         elif below > 0:
             lines = "line" if below == 1 else "lines"
-            bar.border_title = SCROLLED.format(count=below, lines=lines)
+            title = SCROLLED.format(count=below, lines=lines)
         else:
-            bar.border_title = FIRST_HINT if self.first_hint else ""
+            title = FIRST_HINT if self.first_hint else ""
+        bar.border_title = self.drawn(title)
 
     def say(self, kind: str, text: str | Content) -> None:
         self.show(Message(kind, text))
