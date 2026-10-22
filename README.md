@@ -2,7 +2,7 @@
 
 A lab databank for a school science project, run full screen inside Windows PowerShell. It stores projects, experiments, measured values and compounds exactly as you type them, keeps a history of every change, and later saves curve fits you can look up again. Synthase uses no AI and gives the same answer for the same input every time. All lab data stays on your own computer, never in this repo.
 
-**Synthase is being rebuilt.** The old app was retired (see [decision 0020](docs/decisions/0020-clean-slate.md)) and the new one is built from the feature spec, [`docs/spec.md`](docs/spec.md), starting with the Ledger. Until it arrives, typing `synthase` prints one line saying so. The version stays at `v0.2.0` until the owner decides to change it. See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
+**Synthase is being rebuilt.** The old app was retired (see [decision 0020](docs/decisions/0020-clean-slate.md)) and the new one is built from the feature spec, [`docs/spec.md`](docs/spec.md), starting with the Ledger. Typing `synthase` opens the app, which so far runs `help` and `exit`; the commands that store data arrive one by one. The version stays at `v0.2.0` until the owner decides to change it. See [ROADMAP.md](ROADMAP.md) for what is being built and in what order.
 
 ## Install (Windows PowerShell)
 
@@ -33,7 +33,7 @@ A lab databank for a school science project, run full screen inside Windows Powe
    ```powershell
    synthase
    ```
-   For now it prints that Synthase is being rebuilt.
+   The app opens full screen in that folder. Type `help` to see the commands, and `exit` (or press Ctrl+D) to leave. A folder with no project says `No Synthase project here.`; that's expected until `project create` is built.
 
 **Without Git,** download a ZIP copy instead: on the GitHub page, click **Code** → **Download ZIP** in your browser, unzip it outside OneDrive, open PowerShell in the unzipped folder (the one with `pyproject.toml` in it) and run `.\scripts\setup.ps1`. Use the browser: downloading the ZIP with `Invoke-WebRequest` can save a small web page instead of the code. A ZIP copy can't update itself with `git pull` (see below).
 
