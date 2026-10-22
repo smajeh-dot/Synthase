@@ -1,0 +1,139 @@
+/* The app's look. Every colour is a token from theme.py; nothing is styled in
+   Python. Save this file while `synthase --dev` is running and the open app
+   updates. Design: docs/decisions/0026-app-shell.md. */
+
+Screen {
+    background: $background;
+    color: $foreground;
+}
+
+/* Output area */
+#output {
+    height: 1fr;
+    padding: 0 1;
+    background: $background;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-size-vertical: 1;
+    scrollbar-background: $track;
+    scrollbar-background-hover: $track;
+    scrollbar-background-active: $track;
+    scrollbar-color: $thumb;
+    scrollbar-color-hover: $muted;
+    scrollbar-color-active: $foreground;
+}
+
+/* Messages: one widget each. .glyph is the 2-cell symbol column, so wrapped
+   lines hang under the text. */
+.msg { width: 1fr; height: auto; }
+.msg.-reply { padding-left: 2; }
+.msg > .glyph { width: 2; height: auto; }
+.msg > .body { width: 1fr; height: auto; }
+
+.msg.-welcome > .lead { width: auto; color: $echo; text-style: bold; }
+.msg.-welcome > .sep { width: auto; color: $faint; }
+.msg.-welcome > .body { color: $muted; }
+
+.msg.-echo { margin-top: 1; }
+.msg.-echo > .glyph { color: $accent; text-style: bold; }
+.msg.-echo > .body { color: $echo; text-style: bold; }
+
+.msg.-normal > .body { color: $foreground; }
+
+.msg.-success > .glyph { color: $success; text-style: bold; }
+.msg.-success > .body { color: $success; }
+
+.msg.-notice > .glyph { color: $accent; text-style: bold; }
+.msg.-notice > .body { color: $foreground; }
+
+.msg.-hint > .glyph, .msg.-hint > .body { color: $muted; }
+.msg.-cancel > .glyph, .msg.-cancel > .body { color: $muted; }
+
+.msg.-error > .glyph { color: $error; text-style: bold; }
+.msg.-error > .body { color: $error; }
+
+/* help: a heading with a rule over each group, the usage in a 52-cell column,
+   a blank row between groups. Below 100 columns the help line goes under the
+   usage. */
+HelpList { height: auto; }
+HelpList > .group { height: auto; margin-bottom: 1; }
+HelpList > .msg.-hint { padding-left: 0; }
+HelpLine { height: auto; padding-left: 2; }
+HelpLine > .usage { width: 52; height: auto; }
+HelpLine > .text { width: 1fr; height: auto; color: $foreground; }
+Screen.-narrow HelpLine { layout: vertical; }
+Screen.-narrow HelpLine > .usage { width: 1fr; }
+Screen.-narrow HelpLine > .text { padding-left: 2; }
+
+/* help <command>: Usage: and Example: in a 9-cell label column. */
+HelpForms { height: auto; }
+HelpForms > .form {
+    height: auto;
+    margin-bottom: 1;
+    grid-size: 2;
+    grid-columns: 9 1fr;
+    grid-rows: auto;
+}
+HelpForms > .form:last-child { margin-bottom: 0; }
+HelpForms .form > * { height: auto; }
+HelpForms .key { color: $muted; }
+HelpForms .example { color: $echo; }
+
+/* The error log: a blank row above, the entry at 4 and never coloured. */
+.msg.-log { height: auto; margin-top: 1; }
+.msg.-log > .log { height: auto; padding-left: 2; color: $foreground; }
+.msg.-spaced { margin-top: 1; }
+
+/* Bottom block, always 4 rows: rule, input, rule, then the status line. */
+#bottom {
+    dock: bottom;
+    height: auto;
+    background: $background;
+}
+
+#bar {
+    height: auto;
+    padding: 0 1;
+    border-top: solid $rule;
+    border-bottom: solid $rule;
+    border-title-align: right;
+    border-title-color: $muted;
+    border-title-style: none;
+}
+
+/* Answer mode: heavy blue rules, the title on the left. */
+#bar.-answering {
+    border-top: heavy $answer;
+    border-bottom: heavy $answer;
+    border-title-align: left;
+}
+
+#line { height: 1; }
+
+#prompt {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+}
+#bar.-answering #prompt { color: $answer; text-style: none; }
+
+#command {
+    width: 1fr;
+    background: $background;
+    color: $echo;
+}
+
+#command:focus {
+    background-tint: $foreground 0%;
+}
+
+#command > .input--placeholder,
+#command > .input--suggestion { color: $faint; }
+#command > .input--cursor { background: $foreground; color: $background; }
+#command > .input--selection { background: $select; }
+
+#status {
+    height: 1;
+    padding: 0 1;
+    color: $status;
+}

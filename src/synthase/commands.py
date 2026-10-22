@@ -287,11 +287,16 @@ def _help(topic: str | None) -> str:
             lines.append(group)
             lines += [f"  {c.usage}".ljust(column) + c.help for c in commands]
         return "\n".join(lines)
+    return "\n\n".join(
+        f"Usage: {c.usage}\n{c.help}\nExample: {c.example}" for c in help_forms(topic)
+    )
+
+
+def help_forms(topic: str) -> list[Command]:
+    """Every form `help <topic>` lists; CommandError if it isn't a first word."""
     if topic not in COMMAND_WORDS:
         raise _unknown(topic, COMMAND_WORDS)
-    return "\n\n".join(
-        f"Usage: {c.usage}\n{c.help}\nExample: {c.example}" for c in _forms(topic)
-    )
+    return _forms(topic)
 
 
 Handler = Callable[[Call], str]
