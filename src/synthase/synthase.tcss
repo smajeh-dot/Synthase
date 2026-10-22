@@ -84,12 +84,29 @@ HelpForms .example { color: $echo; }
 .msg.-log > .log { height: auto; padding-left: 2; color: $foreground; }
 .msg.-spaced { margin-top: 1; }
 
-/* Bottom block, always 4 rows: rule, input, rule, then the status line. */
+/* Bottom block, always 4 rows: rule, input, rule, then the status line, with
+   the pop-up above them while it is open. */
 #bottom {
     dock: bottom;
     height: auto;
     background: $background;
 }
+
+/* The pop-up of Tab's matches, just above the bar; hidden until Tab opens it. */
+#matches {
+    display: none;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    margin-left: 2;
+    padding: 0 1 0 0;
+    border: round $line;
+    border-title-align: left;
+    border-title-color: $muted;
+    border-subtitle-align: left;
+    border-subtitle-color: $faint;
+}
+#matches.-open { display: block; }
 
 #bar {
     height: auto;

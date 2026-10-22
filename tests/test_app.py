@@ -16,6 +16,7 @@ from synthase import __version__, history
 from synthase.app import (
     FIRST_HINT,
     PLACEHOLDER,
+    TAB_HINT,
     ErrorLog,
     HelpForms,
     HelpList,
@@ -110,6 +111,7 @@ def test_help_and_a_typo_run_through_the_app(project):
 def test_the_welcome_line_and_the_first_hint(project):
     async def steps(app, pilot):
         assert app.query_one("#bar").border_title == FIRST_HINT
+        assert FIRST_HINT == " Tab completes · Ctrl+D exits "
         assert app.query_one("#command").placeholder == PLACEHOLDER
         await typing("help")(app, pilot)
 
@@ -371,3 +373,138 @@ def test_with_no_project_no_log_file_is_written(home):
         "error",
         "Failed. Would you like the error log? [y/n] y",
     )
+
+
+# Tab completion (#118, decision 0028)
+
+
+def bar_value(app):
+    return app.query_one("#command").value
+
+
+def pop_up(app):
+    """The pop-up as shown: its top border, its rows and its bottom border."""
+    matches = app.query_one("#matches")
+    if not matches.has_class("-open"):
+        return None
+    rows = matches.render().plain.splitlines()
+    return (matches.border_title, rows, matches.border_subtitle)
+
+
+async def type_in(pilot, *keys):
+    await pilot.press(*keys)
+    await pilot.pause()
+
+
+def test_tab_with_several_matches_opens_the_pop_up(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "e", "x", "tab")
+        assert pop_up(app) == (
+            " 2 matches ",
+            ["▸ exit   Leave Synthase (or press Ctrl+D).", "  exp    Experiments"],
+            " 1 of 2 ",
+        )
+        assert app.query_one("#bar").border_title == (
+            " Tab next · Enter chooses · keep typing to narrow "
+        )
+        # Tab cycles round; Shift+Tab, ↑ and ↓ step too. The line is unchanged.
+        await type_in(pilot, "tab")
+        assert pop_up(app)[1][1] == "▸ exp    Experiments"
+        assert pop_up(app)[2] == " 2 of 2 "
+        await type_in(pilot, "tab")
+        assert pop_up(app)[2] == " 1 of 2 "
+        await type_in(pilot, "shift+tab")
+        assert pop_up(app)[2] == " 2 of 2 "
+        await type_in(pilot, "up")
+        assert pop_up(app)[2] == " 1 of 2 "
+        await type_in(pilot, "down")
+        assert pop_up(app)[2] == " 2 of 2 "
+        assert bar_value(app) == "ex"
+        # Enter fills the line and never runs it.
+        await type_in(pilot, "enter")
+        assert pop_up(app) is None
+        assert bar_value(app) == "exp "
+        assert app.is_running
+
+    assert messages(run(steps)) == []
+
+
+def test_typing_narrows_the_pop_up(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "e", "x", "tab", "i")
+        assert pop_up(app) == (
+            " 1 match ",
+            ["▸ exit   Leave Synthase (or press Ctrl+D)."],
+            " 1 of 1 ",
+        )
+        await type_in(pilot, "enter")
+        assert bar_value(app) == "exit"
+        assert app.is_running
+
+    run(steps)
+
+
+def test_a_word_that_matches_nothing_closes_the_pop_up(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "e", "x", "tab", "z")
+        assert pop_up(app) is None
+        assert bar_value(app) == "exz"
+        await type_in(pilot, "tab")
+        assert pop_up(app) is None
+
+    run(steps)
+
+
+def test_ctrl_c_closes_the_pop_up_and_clears_the_line(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "e", "x", "tab", "ctrl+c")
+        assert pop_up(app) is None
+        assert bar_value(app) == ""
+        await type_in(pilot, "e", "x", "tab", "escape")
+        assert pop_up(app) is None
+        assert bar_value(app) == "ex"
+
+    assert messages(run(steps)) == []
+
+
+def test_the_pop_up_shows_eight_rows_at_a_time(project):
+    app = SynthaseApp()
+    app.sources["id"] = lambda words: [f"C{n:03}" for n in range(1, 13)]
+
+    async def steps(app, pilot):
+        app.query_one("#command").value = "compound edit "
+        await type_in(pilot, "tab")
+        title, rows, place = pop_up(app)
+        assert (title, place) == (" 12 matches ", " 1 of 12 ")
+        assert rows == ["▸ C001", *(f"  C{n:03}" for n in range(2, 9))]
+        await type_in(pilot, *["tab"] * 8)
+        title, rows, place = pop_up(app)
+        assert place == " 9 of 12 "
+        assert rows == [*(f"  C{n:03}" for n in range(2, 9)), "▸ C009"]
+        await type_in(pilot, "enter")
+        assert bar_value(app) == "compound edit C009"
+
+    run(steps, app=app)
+
+
+def test_one_match_shows_ghost_text_and_tab_takes_it(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "h", "e", "l")
+        await pilot.pause()
+        command = app.query_one("#command")
+        assert command.render_line(0).text.startswith("help")
+        assert app.query_one("#bar").border_title == TAB_HINT == " Tab completes "
+        await type_in(pilot, "tab")
+        assert bar_value(app) == "help "
+        assert pop_up(app) is None
+        assert app.query_one("#bar").border_title == FIRST_HINT
+
+    assert messages(run(steps)) == []
+
+
+def test_a_command_with_nothing_after_it_gets_no_space(project):
+    async def steps(app, pilot):
+        await type_in(pilot, "e", "x", "i", "tab")
+        assert bar_value(app) == "exit"
+
+    run(steps)
