@@ -64,7 +64,7 @@ def folder_state() -> FolderState:
     return FolderState.NO_PROJECT
 
 
-def _shown(path: Path) -> str:
+def shown(path: Path) -> str:
     """A file as the owner sees it in File Explorer, e.g. data\\compounds.toml."""
     return f"{path.parent.name}\\{path.name}"
 
@@ -83,11 +83,11 @@ def read_toml(path: Path) -> TOMLDocument:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         line = raw[: error.start].count(b"\n") + 1
-        raise StorageError(BROKEN.format(file=_shown(path), line=line)) from None
+        raise StorageError(BROKEN.format(file=shown(path), line=line)) from None
     try:
         return tomlkit.parse(text)
     except ParseError as error:
-        raise StorageError(BROKEN.format(file=_shown(path), line=error.line)) from None
+        raise StorageError(BROKEN.format(file=shown(path), line=error.line)) from None
 
 
 def _refuse_floats(item: object) -> None:
@@ -120,6 +120,6 @@ def save_toml(path: Path, doc: TOMLDocument) -> None:
             except PermissionError:
                 if attempt < TRIES - 1:
                     time.sleep(WAIT)
-        raise StorageError(HELD.format(file=_shown(path)))
+        raise StorageError(HELD.format(file=shown(path)))
     finally:
         temporary.unlink(missing_ok=True)

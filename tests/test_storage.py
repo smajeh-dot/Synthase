@@ -5,21 +5,6 @@ from synthase import storage
 from synthase.storage import FolderState, StorageError
 
 
-@pytest.fixture
-def home(tmp_path, monkeypatch):
-    """A project folder in a temporary folder, through SYNTHASE_HOME."""
-    monkeypatch.setenv("SYNTHASE_HOME", str(tmp_path))
-    return tmp_path
-
-
-@pytest.fixture
-def data(home):
-    folder = home / "data"
-    folder.mkdir()
-    (folder / "synthase.toml").write_text('name = "Invented project"\n')
-    return folder
-
-
 def test_the_project_folder_is_synthase_home(home):
     assert storage.project_folder() == home
     assert storage.data_folder() == home / "data"
