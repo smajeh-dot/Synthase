@@ -27,6 +27,7 @@ from synthase.app import (
 )
 from synthase.lock import IN_USE
 from synthase.startup import FOREIGN, NO_PROJECT
+from synthase.walkthrough import Question, Walkthrough
 
 
 @dataclass
@@ -509,6 +510,183 @@ def test_a_command_with_nothing_after_it_gets_no_space(project):
         assert bar_value(app) == "exit"
 
     run(steps)
+
+
+# Walk-through questions (#101, decision 0030)
+
+
+def walking_app(edit=False, current=None):
+    """The app with `exp create` (or `exp edit`) as an invented three-question
+    walk-through; ``saved`` gets the answers if it finishes."""
+    app = SynthaseApp()
+    app.saved = []
+    current = current or {}
+    questions = [
+        Question("title", "Title", current=current.get("title")),
+        Question("notes", "Notes", optional=True, current=current.get("notes")),
+        Question("file", "File", optional=True, path=True, current=current.get("file")),
+    ]
+    command = "exp edit" if edit else "exp create"
+    walk = Walkthrough(command, questions, app.saved.append, edit=edit)
+    app.handlers[tuple(command.split())] = lambda call: app.ask(walk)
+    return app
+
+
+def bar_title(app):
+    return Content.from_markup(app.query_one("#bar").border_title).plain
+
+
+def test_a_walk_through_asks_one_question_at_a_time(project):
+    async def steps(app, pilot):
+        await typing("exp create")(app, pilot)
+        assert app.query_one("#bar").has_class("-answering")
+        assert bar_title(app) == "━ Answering exp create · Ctrl+C cancels "
+        assert str(app.query_one("#prompt").render()) == "Title: "
+        await typing("")(app, pilot)
+        await typing("Invented title")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering exp create · Enter skips · Ctrl+C cancels "
+        )
+        assert str(app.query_one("#prompt").render()) == "Notes: "
+        await typing("", '  "C:\\Lab\\run 1.csv"  ')(app, pilot)
+        assert not app.query_one("#bar").has_class("-answering")
+        assert app.query_one("#prompt").render().plain == "> "
+
+    shown = run(steps, app=(app := walking_app()))
+    assert app.saved == [
+        {"title": "Invented title", "notes": None, "file": "C:\\Lab\\run 1.csv"}
+    ]
+    assert messages(shown)[1:] == [
+        ("error", "An answer is needed."),
+        ("normal", "Title: Invented title"),
+        ("normal", "Notes:"),
+        ("normal", "File: C:\\Lab\\run 1.csv"),
+    ]
+
+
+def test_an_edit_keeps_with_enter_and_clears_with_a_dash(project):
+    current = {"title": "Old title", "notes": "Old notes", "file": "C:\\old.csv"}
+
+    async def steps(app, pilot):
+        await typing("exp edit")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering exp edit · Enter keeps · - clears · Ctrl+C cancels "
+        )
+        assert app.query_one("#command").placeholder == "Old title"
+        await typing("", "-", "C:\\new.csv")(app, pilot)
+
+    shown = run(steps, app=(app := walking_app(edit=True, current=current)))
+    assert app.saved == [{"title": "Old title", "notes": None, "file": "C:\\new.csv"}]
+    assert messages(shown)[1:] == [
+        ("normal", "Title: Old title"),
+        ("normal", "Notes:"),
+        ("normal", "File: C:\\new.csv"),
+    ]
+
+
+def test_a_multi_line_question_ends_on_an_empty_line(project):
+    app = SynthaseApp()
+    saved = []
+    question = Question("values", "Values", lines=True)
+    walk = Walkthrough("exp create", [question], saved.append)
+    app.handlers[("exp", "create")] = lambda call: app.ask(walk)
+
+    async def steps(app, pilot):
+        await typing("exp create", "mass 2.003 g")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering exp create · one per line · empty line ends · Ctrl+C cancels "
+        )
+        assert app.query_one("#bar").has_class("-answering")
+        await typing("volume 5 mL", "")(app, pilot)
+        assert not app.query_one("#bar").has_class("-answering")
+
+    shown = run(steps, app=app)
+    assert saved == [{"values": ["mass 2.003 g", "volume 5 mL"]}]
+    assert messages(shown)[1:] == [
+        ("normal", "Values: mass 2.003 g"),
+        ("normal", "        volume 5 mL"),
+    ]
+
+
+def test_ctrl_c_cancels_and_saves_nothing(project):
+    before = {f.name: f.read_bytes() for f in project.iterdir()}
+
+    async def steps(app, pilot):
+        await typing("exp create", "Invented title")(app, pilot)
+        app.query_one("#command").value = "half an ans"
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert not app.query_one("#bar").has_class("-answering")
+        assert app.walk is None
+        assert bar_value(app) == ""
+
+    shown = run(steps, app=(app := walking_app()))
+    assert app.saved == []
+    assert messages(shown)[-1] == ("cancel", "Cancelled. Nothing was saved.")
+    after = {f.name: f.read_bytes() for f in project.iterdir()}
+    # The command line is kept in the up-arrow history; nothing else changed.
+    assert after.pop(".history") == b"exp create\n"
+    assert after == before
+
+
+def test_tab_and_ctrl_d_do_nothing_in_a_walk_through(project):
+    async def steps(app, pilot):
+        await typing("exp create")(app, pilot)
+        await type_in(pilot, "e", "x", "tab", "ctrl+d")
+        assert app.is_running
+        assert bar_value(app) == "ex"
+        assert pop_up(app) is None
+
+    run(steps, app=walking_app())
+
+
+def test_the_history_skips_answers_and_waits_in_a_walk_through(project):
+    async def steps(app, pilot):
+        await typing("help", "exp create")(app, pilot)
+        await type_in(pilot, "up")
+        assert bar_value(app) == ""
+        assert app.history.step is None
+        await typing("Invented title", "", "")(app, pilot)
+        await type_in(pilot, "up")
+        assert bar_value(app) == "exp create"
+
+    run(steps, app=walking_app())
+    assert (project / ".history").read_text("utf-8") == "help\nexp create\n"
+
+
+def test_a_failure_when_saving_asks_about_the_log(project):
+    app = SynthaseApp()
+
+    def fail(answers):
+        raise RuntimeError("an invented failure")
+
+    walk = Walkthrough("exp create", [Question("title", "Title")], fail)
+    app.handlers[("exp", "create")] = lambda call: app.ask(walk)
+
+    async def steps(app, pilot):
+        await typing("exp create", "Invented title")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering exp create · Enter means no · Ctrl+C cancels "
+        )
+        assert app.walk is None
+
+    run(steps, app=app)
+    assert "RuntimeError: an invented failure" in (project / "error.log").read_text()
+
+
+def test_a_failing_check_asks_about_the_log(project):
+    app = SynthaseApp()
+    question = Question("title", "Title", check=lambda text: 1 / 0)
+    walk = Walkthrough("exp create", [question], print)
+    app.handlers[("exp", "create")] = lambda call: app.ask(walk)
+
+    async def steps(app, pilot):
+        await typing("exp create", "Invented title")(app, pilot)
+        assert app.walk is None
+        assert app.failure is not None
+
+    run(steps, app=app)
+    assert "ZeroDivisionError" in (project / "error.log").read_text()
 
 
 # The older console (#119, decision 0029)

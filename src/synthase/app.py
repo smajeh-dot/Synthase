@@ -17,7 +17,14 @@ from textual.suggester import Suggester
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
-from synthase import __version__, command_history, error_log, lock, older_console
+from synthase import (
+    __version__,
+    command_history,
+    error_log,
+    lock,
+    older_console,
+    walkthrough,
+)
 from synthase.command_history import CommandHistory
 from synthase.commands import (
     COMMANDS,
@@ -33,6 +40,7 @@ from synthase.commands import (
 from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
 from synthase.storage import FolderState, folder_state, project_folder
 from synthase.theme import SYNTHASE, SYNTHASE_16
+from synthase.walkthrough import Step, Walk, Walkthrough
 
 WELCOME = "type 'help' for commands"
 PLACEHOLDER = "Type a command, e.g. help"
@@ -49,6 +57,11 @@ SCROLLED = " scrolled up · {count} newer {lines} below · PgDn to go back down 
 ANSWERING = "Answering {command}"
 ANSWER_HINT = " · Enter means no · Ctrl+C cancels "
 ANSWER_PLACEHOLDER = "y or n"
+# A walk-through question's hint, by what Enter on its own does (decision 0030).
+SKIP_HINT = " · Enter skips · Ctrl+C cancels "
+NEEDED_HINT = " · Ctrl+C cancels "
+KEEP_HINT = " · Enter keeps · - clears · Ctrl+C cancels "
+LINES_HINT = " · one per line · empty line ends · Ctrl+C cancels "
 HELP_HINT = "For every form of one command, type help <command>, e.g. help exp."
 NOT_BUILT = "{command} isn't built yet."
 # The output keeps only the latest messages, so a long session stays quick.
@@ -287,6 +300,7 @@ class SynthaseApp(App):
         # What Tab offers for IDs and names, by Arg.name (#104 onwards).
         self.sources: dict[str, Source] = {}
         self.failure: Failure | None = None
+        self.walk: Walk | None = None
         self.first_hint = True
         self.history = CommandHistory()
         # The line ↑ or ↓ last put in the bar, until it is typed over.
@@ -362,7 +376,7 @@ class SynthaseApp(App):
         """The top rule's title: the question, the pop-up's keys, the history step,
         Tab for one match, scrolled up, the first hint, or none."""
         bar = self.query_one("#bar")
-        if self.failure is not None:
+        if self.asking:
             return
         output = self.query_one("#output", VerticalScroll)
         below = round(output.max_scroll_y - output.scroll_y)
@@ -408,10 +422,19 @@ class SynthaseApp(App):
             self.draw_matches()
         self.draw_title()
 
+    @property
+    def asking(self) -> bool:
+        """Whether the bar is in answer mode: the error question or a walk-through."""
+        return self.failure is not None or self.walk is not None
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.failure is not None:
             event.input.clear()
             self.answer_failure(event.value)
+            return
+        if self.walk is not None:
+            event.input.clear()
+            self.answer_walk(event.value)
             return
         if self.matches:
             self.fill(self.matches[self.current])
@@ -492,16 +515,26 @@ class SynthaseApp(App):
         has_project = self.startup.state is FolderState.PROJECT
         file = error_log.write(entry) if has_project else None
         self.failure = Failure(entry, file)
+        self.start_answering(
+            command, ANSWER_HINT, self.failure_question("$answer"), ANSWER_PLACEHOLDER
+        )
+
+    def start_answering(
+        self, command: str, hint: str, prompt: Content, placeholder: str
+    ) -> None:
+        """Answer mode: heavy blue rules titled `Answering <command>`, the question
+        as the prompt."""
+        self.close_matches()
         bar = self.query_one("#bar")
         bar.add_class("-answering")
         # Textual draws one rule cell before the title; the design has two.
         bar.border_title = Content.assemble(
             ("━ ", "$answer"),
             (ANSWERING.format(command=command), "bold $answer"),
-            (ANSWER_HINT, "$muted"),
+            (hint, "$muted"),
         )
-        self.query_one("#prompt", Label).update(self.failure_question("$answer"))
-        self.query_one("#command", Input).placeholder = ANSWER_PLACEHOLDER
+        self.query_one("#prompt", Label).update(prompt)
+        self.query_one("#command", Input).placeholder = placeholder
 
     def failure_question(self, style: str) -> Content:
         return Content.assemble(
@@ -520,6 +553,77 @@ class SynthaseApp(App):
                 stays.add_class("-spaced")
                 self.show(stays)
 
+    def ask(self, questions: Walkthrough) -> None:
+        """Start a walk-through; nothing is saved until its last answer."""
+        self.walk = Walk(questions)
+        self.ask_next()
+
+    def ask_next(self) -> None:
+        walk = self.walk
+        question = walk.question
+        if walk.keeping:
+            hint = KEEP_HINT
+        elif question.lines:
+            hint = LINES_HINT
+        else:
+            hint = SKIP_HINT if question.optional else NEEDED_HINT
+        current = question.current if walk.keeping else None
+        if isinstance(current, list):
+            current = "; ".join(current)
+        prompt = Content.styled(f"{question.label}: ", "$answer")
+        self.start_answering(walk.walkthrough.command, hint, prompt, current or "")
+
+    def answer_walk(self, text: str) -> None:
+        """Record an answer and ask the next question, or refuse it and ask again."""
+        walk = self.walk
+        label = walk.question.label
+        try:
+            step = walk.answer(text)
+        except Exception as error:
+            self.walk_failed(error)
+            return
+        if step.refused is not None:
+            self.say("error", step.refused)
+            return
+        if step.shown is not None:
+            self.record(label, step)
+        if walk.question is not None:
+            self.ask_next()
+            return
+        try:
+            walk.walkthrough.finish(walk.answers)
+        except Exception as error:
+            self.walk_failed(error)
+            return
+        self.walk = None
+        self.stop_asking()
+
+    def walk_failed(self, error: Exception) -> None:
+        """An unexpected error in a walk-through ends it and asks the error question."""
+        command = self.walk.walkthrough.command
+        self.walk = None
+        self.stop_asking()
+        self.failed(command, command, error)
+
+    def record(self, label: str, step: Step) -> None:
+        """An answer under its question: the question muted, the answer bright,
+        a multi-line answer's further lines lined up under the first."""
+        lead = f"{label}: "
+        if not step.shown:
+            self.say("normal", Content.styled(lead.rstrip(), "$muted"))
+        for number, line in enumerate(step.shown):
+            start = " " * len(lead) if step.more or number else lead
+            self.say(
+                "normal",
+                Content.styled(start, "$muted") + Content.styled(line, "$echo"),
+            )
+
+    def cancel_walk(self) -> None:
+        """Ctrl+C in a walk-through: it ends, and nothing is saved."""
+        self.walk = None
+        self.stop_asking()
+        self.say("cancel", walkthrough.CANCELLED)
+
     def stop_asking(self) -> None:
         self.failure = None
         self.query_one("#bar").remove_class("-answering")
@@ -529,22 +633,22 @@ class SynthaseApp(App):
 
     def action_clear_line(self) -> None:
         """Ctrl+C clears the line and closes the pop-up; on the error question it
-        also means no."""
+        also means no, and in a walk-through it cancels."""
         command = self.query_one("#command", Input)
         self.close_matches()
+        command.clear()
         if self.failure is not None:
-            command.clear()
             self.answer_failure("")
-        else:
-            command.clear()
+        elif self.walk is not None:
+            self.cancel_walk()
 
     def action_leave(self) -> None:
-        if self.failure is None:
+        if not self.asking:
             self.exit()
 
     def ghost(self, line: str) -> str | None:
         """The line with the rest of its last word, when Tab has only that to offer."""
-        if self.matches or self.failure is not None or not line or line[-1] == " ":
+        if self.matches or self.asking or not line or line[-1] == " ":
             return None
         options = completions(line, self.sources)
         typed = line.split()[-1]
@@ -554,7 +658,7 @@ class SynthaseApp(App):
 
     def action_complete(self, direction: int) -> None:
         """Tab: one match fills the word, several open the pop-up, which Tab cycles."""
-        if self.failure is not None:
+        if self.asking:
             return
         if self.matches:
             self.current = (self.current + direction) % len(self.matches)
@@ -595,7 +699,7 @@ class SynthaseApp(App):
 
     def action_step(self, direction: int) -> None:
         """↑ and ↓: move through the pop-up while it is open, else the history."""
-        if self.failure is not None:
+        if self.asking:
             return
         if self.matches:
             self.action_complete(direction)
