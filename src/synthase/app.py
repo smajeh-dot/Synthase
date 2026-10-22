@@ -23,6 +23,7 @@ from synthase import (
     error_log,
     lock,
     older_console,
+    project,
     walkthrough,
 )
 from synthase.command_history import CommandHistory
@@ -38,9 +39,9 @@ from synthase.commands import (
     parse,
 )
 from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
-from synthase.storage import FolderState, folder_state, project_folder
+from synthase.storage import FolderState, StorageError, folder_state, project_folder
 from synthase.theme import SYNTHASE, SYNTHASE_16
-from synthase.walkthrough import Step, Walk, Walkthrough
+from synthase.walkthrough import Answer, Question, Step, Walk, Walkthrough
 
 WELCOME = "type 'help' for commands"
 PLACEHOLDER = "Type a command, e.g. help"
@@ -295,8 +296,12 @@ class SynthaseApp(App):
         self.register_theme(theme)
         self.theme = theme.name
         self.startup = Startup(project_folder(), FolderState.NO_PROJECT)
-        # What each data command does; later issues add theirs (#101 onwards).
-        self.handlers: dict[tuple[str, ...], Handler] = {}
+        # What each data command does; later issues add theirs (#104 onwards).
+        self.handlers: dict[tuple[str, ...], Handler] = {
+            ("project", "create"): self.project_create,
+            ("project", "show"): self.project_show,
+            ("project", "edit"): self.project_edit,
+        }
         # What Tab offers for IDs and names, by Arg.name (#104 onwards).
         self.sources: dict[str, Source] = {}
         self.failure: Failure | None = None
@@ -479,6 +484,59 @@ class SynthaseApp(App):
         return words == ("project", "create") and (
             self.startup.state is FolderState.NO_PROJECT
         )
+
+    def project_create(self, call: Call) -> None:
+        if self.startup.state is FolderState.PROJECT:
+            self.say("error", project.ALREADY.format(name=project.name()))
+            return
+        name = Question("name", "Name")
+        self.ask(Walkthrough("project create", [name], self.create_project))
+
+    def create_project(self, answers: dict[str, Answer]) -> None:
+        """Create the project, then open it as start-up would (decision 0031)."""
+        name = answers["name"]
+        try:
+            project.create(name)
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.startup = open_folder()
+        if self.startup.locked:
+            self.history.keep()
+        self.draw_status()
+        folder = self.startup.folder
+        self.say("success", project.CREATED.format(name=name, folder=folder))
+        if self.startup.refusal is not None:
+            self.say(*self.startup.refusal)
+
+    def project_show(self, call: Call) -> None:
+        """Labels muted, values bright, in one label column."""
+        lines = [
+            Content.styled(label.ljust(project.LABEL_WIDTH), "$muted")
+            + Content.styled(value, "$echo")
+            for label, value in project.details()
+        ]
+        self.say("normal", Content("\n").join(lines))
+
+    def project_edit(self, call: Call) -> None:
+        name = Question("name", "Name", current=project.name() or None)
+        walk = Walkthrough("project edit", [name], self.rename_project, edit=True)
+        self.ask(walk)
+
+    def rename_project(self, answers: dict[str, Answer]) -> None:
+        new = answers["name"]
+        old = project.name()
+        if new is None or new == old:
+            self.say("hint", project.KEPT)
+            return
+        try:
+            project.rename(new)
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.startup.name = new
+        self.draw_status()
+        self.say("success", project.RENAMED.format(old=old, new=new))
 
     def show_help(self, topic: str | None) -> None:
         if topic is None:
