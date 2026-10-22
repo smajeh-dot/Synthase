@@ -12,7 +12,7 @@ Every data command needs the same three things: the next free ID (spec C80–C84
 
 **History**
 - `data\history.jsonl` gets one JSON line per change, with `ts`, `action`, `id`, `name`, `old`, `new`, `file` and `sha256` (the hash of `file` after the change, or `null` if it is gone). It is only ever added to. Symbols such as `µ` are written as they are, so the file stays readable in Notepad.
-- **Issuing an ID is logged** with the action `issue_id`, because saving the counter changes `synthase.toml`. Without it, the next start would report `synthase.toml` as changed outside Synthase. This adds one action to the spec's list in C171.
+- **Issuing an ID is logged** with the action `issue_id`, because saving the counter changes `synthase.toml`. Without it, the next start would report `synthase.toml` as changed outside Synthase. This adds one action to the spec's list in C171; the owner approved it on 2026-10-22.
 - On start, each data file (`synthase.toml`, `experiments.toml`, `compounds.toml`) is compared with the last hash logged for it. A file that differs, is new or has gone is logged as `external_edit` and reported once:
   - `data\experiments.toml was changed outside Synthase. The change is noted in the history.`
   - `data\compounds.toml was deleted outside Synthase. The deletion is noted in the history.`
