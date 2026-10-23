@@ -24,6 +24,7 @@ from synthase import (
     experiments,
     history,
     lock,
+    logo,
     older_console,
     project,
     walkthrough,
@@ -323,7 +324,12 @@ class SynthaseApp(App):
         self.current = 0
 
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(Welcome(), id="output")
+        with VerticalScroll(id="output"):
+            # Drawn once at start-up, never redrawn (decision 0035).
+            height = self.size.height
+            if height >= logo.MIN_ROWS and not (self.ascii or self.sixteen):
+                yield Static(logo.content(logo.ring(height)), id="logo")
+            yield Welcome()
         with Vertical(id="bottom"):
             yield Matches(id="matches")
             with Vertical(id="bar"):

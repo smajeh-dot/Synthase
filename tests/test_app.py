@@ -12,6 +12,7 @@ import tomllib
 from dataclasses import dataclass, field
 
 import pytest
+from test_logo import LOGO_24, LOGO_30
 from textual import constants
 from textual.color import Color
 from textual.content import Content
@@ -702,8 +703,9 @@ def test_success_and_error_start_with_a_green_or_red_circle(home):
         app.say("error", "Not done")
         await pilot.pause()
         drawn = screen(app)
-        assert "   ● Done" in drawn[2]
-        assert "   ● Not done" in drawn[3]
+        welcome = next(y for y, row in enumerate(drawn) if row.startswith(" Synthase"))
+        assert "   ● Done" in drawn[welcome + 2]
+        assert "   ● Not done" in drawn[welcome + 3]
         success, error = (m.query_one(".glyph") for m in app.query(Message)[-2:])
         colours = app.get_css_variables()
         assert success.styles.color == Color.parse(colours["success"])
@@ -1150,3 +1152,85 @@ def test_tab_offers_the_experiment_ids_after_exp_show(project):
         assert [match.word for match in app.matches] == ["E001", "E002", "all"]
 
     run(steps)
+
+
+# The start-up logo (#132, decision 0035)
+
+
+def cells(app, y):
+    """Row y of the screen as (character, foreground, background) per cell."""
+    strip = app.screen._compositor.render_strips()[y]
+
+    def hex_of(colour):
+        return colour.triplet.hex.upper() if colour else None
+
+    return [
+        (char, hex_of(segment.style.color), hex_of(segment.style.bgcolor))
+        for segment in strip
+        for char in segment.text
+    ]
+
+
+def logo_on_screen(size, table):
+    """Check the logo and its blank rows at `size` against the design's table."""
+    welcome = f"Synthase {__version__}  ·  type 'help' for commands"
+
+    async def steps(app, pilot):
+        width = size[0]
+        rows = [cells(app, y) for y in range(len(table) + 3)]
+        blank = [(" ", "#0C0C0C")] * width
+        assert [(c, bg) for c, _, bg in rows[0]] == blank
+        for row, expected in zip(rows[1:], table, strict=False):
+            drawn = row[1 : 1 + len(expected)]
+            for (char, fg, bg), cell in zip(drawn, expected, strict=True):
+                if cell is None:
+                    assert (char, bg) == (" ", "#0C0C0C")
+                else:
+                    assert (char, fg, bg) == (cell[0], cell[1], cell[2] or "#0C0C0C")
+            rest = row[:1] + row[1 + len(expected) :]
+            assert all(char == " " for char, _, _ in rest)
+        assert [(c, bg) for c, _, bg in rows[len(table) + 1]] == blank
+        line = "".join(char for char, _, _ in rows[len(table) + 2])
+        assert line == " " + welcome.ljust(width - 1)
+
+    return run(steps, size=size)
+
+
+def app_logo(shown):
+    return [w for w in shown.output if w.id == "logo"]
+
+
+def test_the_logo_at_80_by_24_is_the_design(home):
+    shown = logo_on_screen((80, 24), LOGO_24)
+    assert [w.id for w in shown.output[:1]] == ["logo"]
+
+
+def test_the_logo_at_120_by_30_is_the_design(home):
+    logo_on_screen((120, 30), LOGO_30)
+
+
+def test_no_logo_in_a_window_under_24_rows(home):
+    async def steps(app, pilot):
+        assert screen(app)[0].startswith(" Synthase ")
+
+    shown = run(steps, size=(80, 23))
+    assert not app_logo(shown)
+    assert isinstance(shown.output[0], Welcome)
+
+
+def test_no_logo_in_the_older_console(home, monkeypatch):
+    with monkeypatch.context() as ascii_console:
+        ascii_console.setattr(older_console, "output_encoding", lambda: "cp437")
+        assert not app_logo(run(size=(80, 24)))
+    monkeypatch.setattr(constants, "COLOR_SYSTEM", "standard")
+    assert not app_logo(run(size=(80, 24)))
+
+
+def test_the_logo_is_not_redrawn_on_resize(home):
+    async def steps(app, pilot):
+        await pilot.resize_terminal(120, 30)
+        await pilot.pause()
+        # Still the 80 × 24 ring: 5 rows, not the 6 a 30-row window starts with.
+        assert app.query_one("#logo").size == (10, 5)
+
+    run(steps, size=(80, 24))
