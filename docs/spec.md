@@ -9,7 +9,7 @@
 > 4. **C164–C173 are accepted as written.** C174–C184 still await the owner's confirmation.
 > 5. **Exactly Python 3.13, native ARM64.** This narrows "3.11 or newer" (C184).
 > 6. **Noun-first commands and one folder per project** (decision 0023, #97). `project`, `exp`, `value` and `compound` commands replace F1's command table; `fetch` is folded into `show`. Synthase works in the folder it is run from, with its data in `data\` there, instead of `Documents\Synthase\`. Every suggestion reads `Did you mean: …?` instead of `Closest: …`. The full command set and its wording are in `docs/decisions/0023-command-set-and-project-folder.md`.
-> 7. **Start-up logo** (decision 0035, #132). A small colour ring above the welcome line, a fifth of the window's height, drawn once at start-up. It is left out in windows under 24 rows and in the older console.
+> 7. **Start-up logo** (decision 0035, #132). A small colour ring at the top of the output, a fifth of the window's height, drawn once at start-up, with the welcome line's two parts stacked to its right. It is left out in windows under 24 rows and in the older console.
 
 ---
 
