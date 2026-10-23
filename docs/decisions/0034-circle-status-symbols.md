@@ -6,6 +6,7 @@ Decisions 0016 and 0027 started every success message with `✓` and every error
 ## Decision
 - Success and error messages start with `●` (U+25CF) in place of `✓` and `✗`. Its colour is the message's own: `$success` green or `$error` red, bold, as the symbols were. The status line's error flag starts with the same red `●`.
 - The size is the reference screenshot's. Measured there, the circle is 11 px across in a 13 px cell, the height of a lowercase `a`, which is `●` drawn one cell wide in the terminal's own font. The smaller bullet `•` measured 7 px, so it was not used.
+- Cascadia Mono, Windows Terminal's font, has no filled circle between `●` (0.88 of a cell wide) and `•` (0.49). The owner asked for a slightly smaller circle, compared the two drawn in that font, and kept `●` on 2026-10-23.
 - On the older console (decision 0029) `●` is drawn as `o`, still in green or red. The old console's raster font and `cp437` have no `●`.
 - The other symbols (`>`, `i`, `›`, `‹`) are unchanged.
 
