@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from itertools import groupby
 
 from synthase.suggest import suggestion
+from synthase.values import unit_words
 
 # The words that introduce an uncertainty in a value line (spec C168).
 PLUS_MINUS = ("+/-", "±")
@@ -24,7 +25,9 @@ class Arg:
 
     ``name`` is the key in ``Call.args`` and says what the part is, for Tab
     completion. ``read`` is how it is read: one ``word``, the ``rest`` of the
-    line, an ``uncertainty`` after ``+/-``, or the ``note`` after ``#``.
+    line, a ``unit`` (two words when they are a listed unit such as
+    ``mol dm^-3``, else one), an ``uncertainty`` after ``+/-``, or the ``note``
+    after ``#``.
     """
 
     name: str
@@ -66,7 +69,7 @@ VALUE_NAME = Arg("name", "<name>")
 VALUE_LINE = (
     VALUE_NAME,
     Arg("value", "<value>"),
-    Arg("unit", "<unit>"),
+    Arg("unit", "<unit>", "unit"),
     Arg("uncertainty", "[+/- unc]", "uncertainty"),
     Arg("note", "[# note]", "note"),
 )
@@ -234,6 +237,10 @@ def _read_args(command: Command, rest: str) -> dict[str, str | None] | None:
             text = _strip_quotes(rest.strip())
             args[arg.name] = text or None
             words = []
+        elif arg.read == "unit":
+            size = unit_words(words)
+            args[arg.name] = " ".join(words[:size]) or None
+            words = words[size:]
         elif arg.read == "uncertainty":
             args[arg.name] = None
             if words and words[0] in PLUS_MINUS:
