@@ -11,7 +11,7 @@ Spec C168, C165 and C169 say how a value line is read, but leave the unit list o
 **Names** (C165)
 - No spaces, not empty, at most 64 characters, not starting with `#`, not `+/-`, not starting with `rxn_` (kept for F3). Case-sensitive.
 - Messages: `A value name can't start with '#'.` · `A value name can't be '+/-'.` · `A value name can be at most 64 characters.` · `Names starting with rxn_ are kept for reaction records.`
-- The empty and spaced cases can't come from a typed line, only from a CSV row (#108). Their wording is Claude's proposal, not yet approved by the owner: `A value name can't be empty.` · `A value name can't contain spaces.`
+- The empty and spaced cases can't come from a typed line, only from a CSV row (#108). Their wording was proposed by Claude and approved by the owner on 2026-10-23: `A value name can't be empty.` · `A value name can't contain spaces.`
 
 **Units**
 - A unit is required. It is matched whole and case-sensitive against this list, and stored as typed (`u` is not turned into `µ`):
