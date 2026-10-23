@@ -21,6 +21,8 @@ from synthase import (
     __version__,
     command_history,
     error_log,
+    experiments,
+    history,
     lock,
     older_console,
     project,
@@ -38,9 +40,11 @@ from synthase.commands import (
     help_forms,
     parse,
 )
+from synthase.experiments import ExperimentError
 from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
 from synthase.storage import FolderState, StorageError, folder_state, project_folder
 from synthase.theme import SYNTHASE, SYNTHASE_16
+from synthase.values import EntryError
 from synthase.walkthrough import Answer, Question, Step, Walk, Walkthrough
 
 WELCOME = "type 'help' for commands"
@@ -143,15 +147,15 @@ def usage_content(command: Command) -> Content:
 def names_content(text: str) -> Content:
     """``Did you mean: a, b?`` or ``Commands: a, b``, each name in accent."""
     label, _, rest = text.partition(": ")
-    question = rest.endswith("?")
-    names = rest.removesuffix("?").split(", ")
+    end = rest[-1:] if rest[-1:] in ("?", ".") else ""
+    names = rest.removesuffix(end).split(", ")
     parts = [Content.styled(f"{label}: ", "$muted")]
     for number, name in enumerate(names):
         if number:
             parts.append(Content.styled(", ", "$muted"))
         parts.append(Content.styled(name, "$accent"))
-    if question:
-        parts.append(Content.styled("?", "$muted"))
+    if end:
+        parts.append(Content.styled(end, "$muted"))
     return Content.assemble(*parts)
 
 
@@ -301,9 +305,13 @@ class SynthaseApp(App):
             ("project", "create"): self.project_create,
             ("project", "show"): self.project_show,
             ("project", "edit"): self.project_edit,
+            ("exp", "create"): self.exp_create,
+            ("exp", "open"): self.exp_open,
         }
-        # What Tab offers for IDs and names, by Arg.name (#104 onwards).
-        self.sources: dict[str, Source] = {}
+        # What Tab offers for IDs and names, by Arg.name (#105 onwards).
+        self.sources: dict[str, Source] = {"id": self.experiment_ids}
+        # The ID of the open experiment, shown after the project's name.
+        self.experiment: str | None = None
         self.failure: Failure | None = None
         self.walk: Walk | None = None
         self.first_hint = True
@@ -349,6 +357,8 @@ class SynthaseApp(App):
             self.say("notice", notice)
         if self.startup.refusal is not None:
             self.say(*self.startup.refusal)
+        elif self.startup.locked:
+            self.reopen_last()
 
     def on_unmount(self) -> None:
         if self.startup.locked:
@@ -371,7 +381,9 @@ class SynthaseApp(App):
     def draw_status(self) -> None:
         status = self.query_one("#status", Static)
         width = max(self.size.width - 2, 20)
-        line = status_line(self.startup, width, ellipsis=self.drawn(ELLIPSIS))
+        line = status_line(
+            self.startup, width, self.experiment, ellipsis=self.drawn(ELLIPSIS)
+        )
         status.update(self.drawn(line))
 
     def on_resize(self) -> None:
@@ -538,6 +550,89 @@ class SynthaseApp(App):
         self.draw_status()
         self.say("success", project.RENAMED.format(old=old, new=new))
 
+    def experiment_ids(self, words: tuple[str, ...]) -> list[str]:
+        """What Tab offers for an ID: the experiments, after `exp`."""
+        if words[:1] != ("exp",):
+            return []
+        try:
+            return experiments.ids()
+        except StorageError:
+            return []
+
+    def reopen_last(self) -> None:
+        """Open the experiment last opened in this folder, and say which (0033)."""
+        try:
+            last = experiments.last_opened()
+            if last is None:
+                return
+            text = experiments.AUTO_OPENED.format(
+                id=last, title=experiments.title(last)
+            )
+        except StorageError:
+            return
+        self.experiment = last
+        self.draw_status()
+        self.say("hint", text)
+
+    def open_experiment(self, experiment_id: str) -> None:
+        """Make an experiment the open one, now and at the next start."""
+        self.experiment = experiment_id
+        experiments.remember(experiment_id)
+        self.draw_status()
+
+    def exp_create(self, call: Call) -> None:
+        names: set[str] = set()
+
+        def check_line(text: str) -> str | None:
+            try:
+                entry = experiments.read_line(text)
+            except EntryError as error:
+                return str(error)
+            if entry.name in names:
+                return experiments.DUPLICATE.format(name=entry.name)
+            names.add(entry.name)
+            return None
+
+        questions = [
+            Question("title", "Title"),
+            Question("source", experiments.SOURCE, check=experiments.check_source),
+            Question(
+                "values",
+                "Values",
+                optional=True,
+                lines=True,
+                check=check_line,
+                intro=experiments.FORMAT,
+            ),
+        ]
+        self.ask(Walkthrough("exp create", questions, self.create_experiment))
+
+    def create_experiment(self, answers: dict[str, Answer]) -> None:
+        entries = [experiments.read_line(line) for line in answers["values"] or []]
+        try:
+            new_id, created = experiments.create(answers["title"], entries)
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.open_experiment(new_id)
+        text = experiments.CREATED.format(
+            id=new_id,
+            title=answers["title"],
+            created=history.shown_time(created),
+            count=experiments.counted(len(entries)),
+        )
+        self.say("success", text)
+
+    def exp_open(self, call: Call) -> None:
+        try:
+            found = experiments.find(call.args["id_or_title"])
+        except ExperimentError as error:
+            self.show_error(str(error))
+            return
+        self.open_experiment(found)
+        text = experiments.OPENED.format(id=found, title=experiments.title(found))
+        self.say("success", text)
+
     def show_help(self, topic: str | None) -> None:
         if topic is None:
             self.show(HelpList())
@@ -628,6 +723,8 @@ class SynthaseApp(App):
         current = question.current if walk.keeping else None
         if isinstance(current, list):
             current = "; ".join(current)
+        if question.intro and not walk.typed:
+            self.say("normal", Content.styled(question.intro, "$muted"))
         prompt = Content.styled(f"{question.label}: ", "$answer")
         self.start_answering(walk.walkthrough.command, hint, prompt, current or "")
 

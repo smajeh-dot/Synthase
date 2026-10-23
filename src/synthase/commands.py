@@ -286,6 +286,13 @@ def parse(line: str) -> Call | None:
     return Call(command, args)
 
 
+def read_value_line(text: str) -> dict[str, str | None] | None:
+    """A typed `name value unit [+/- unc] [# note]` line, read as `value add` reads
+    it; None if its shape is wrong. Manual entry reads each line this way."""
+    command = next(c for c in COMMANDS if c.words == ("value", "add"))
+    return _read_args(command, text)
+
+
 def _help(topic: str | None) -> str:
     if topic is None:
         column = 2 + max(len(c.usage) for c in COMMANDS) + 2

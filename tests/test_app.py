@@ -5,15 +5,17 @@ Every folder, name and value is invented.
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass, field
 
 import pytest
 from textual import constants
 from textual.content import Content
 
-from synthase import __version__, history, older_console
+from synthase import __version__, experiments, history, older_console
 from synthase.app import (
     FIRST_HINT,
     PLACEHOLDER,
@@ -924,3 +926,210 @@ def test_project_edit_renames_and_enter_keeps_the_name(project):
         "edit_project",
     ]
     assert messages(run()) == []
+
+
+# Experiments (#104, decision 0033)
+
+SOURCE_QUESTION = "Load starting values from a file, or enter them manually? [f/m]: "
+FORMAT_LINE = (
+    "Enter one value per line:  name  value  unit  [+/- uncertainty]  [# note]"
+)
+
+
+def stored(project):
+    return tomllib.loads((project / "experiments.toml").read_text("utf-8"))
+
+
+def invented_experiments():
+    experiments.create("Recrystallisation trial 2", [])
+    experiments.create("Second try", [])
+
+
+def test_exp_create_asks_three_questions_and_opens_the_experiment(project):
+    async def steps(app, pilot):
+        await typing("exp create")(app, pilot)
+        assert bar_title(app) == "━ Answering exp create · Ctrl+C cancels "
+        assert str(app.query_one("#prompt").render()) == "Title: "
+        await typing("", "Recrystallisation trial 2")(app, pilot)
+        assert str(app.query_one("#prompt").render()) == SOURCE_QUESTION
+        await typing("f", "x", "m")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering exp create · one per line · empty line ends · Ctrl+C cancels "
+        )
+        assert str(app.query_one("#prompt").render()) == "Values: "
+        await typing(
+            "m_salicylic 2.003 g +/- 0.001 # Balance B2",
+            "m_crude 2.2110",
+            "m_crude 2.2110 gg",
+            "m_crude 2.2110 g",
+            "m_crude 1 g",
+            "",
+        )(app, pilot)
+        assert not app.query_one("#bar").has_class("-answering")
+        assert app.experiment == "E001"
+
+    shown = run(steps, size=(200, 50))
+    assert messages(shown)[:-1] == [
+        ("echo", "exp create"),
+        ("error", "An answer is needed."),
+        ("normal", "Title: Recrystallisation trial 2"),
+        ("error", "Loading values from a file isn't built yet."),
+        ("error", "Type f or m."),
+        ("normal", SOURCE_QUESTION + "m"),
+        ("normal", FORMAT_LINE),
+        ("normal", "Values: m_salicylic 2.003 g +/- 0.001 # Balance B2"),
+        ("error", "Each line needs a name, a value and a unit."),
+        ("error", "Unknown unit 'gg'. Did you mean: g, kg?"),
+        ("normal", "        m_crude 2.2110 g"),
+        ("error", "m_crude is already entered in this experiment."),
+    ]
+    kind, text = messages(shown)[-1]
+    assert kind == "success"
+    assert re.fullmatch(
+        r'Created E001 "Recrystallisation trial 2"  ·  '
+        r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  ·  2 values",
+        text,
+    )
+    assert shown.status.startswith("Invented project/E001 · ")
+    saved = stored(project)["E001"]
+    assert saved["title"] == "Recrystallisation trial 2"
+    assert saved["x_unit"] == "s"
+    assert saved["values"] == {
+        "m_salicylic": {
+            "value": "2.003",
+            "unit": "g",
+            "unc": "0.001",
+            "note": "Balance B2",
+        },
+        "m_crude": {"value": "2.2110", "unit": "g"},
+    }
+    assert [e["action"] for e in history.entries()] == [
+        "create_project",
+        "create_experiment",
+        "add",
+        "add",
+        "issue_id",
+    ]
+    assert (project / ".last-experiment").read_text() == "E001\n"
+    # The next start notices no outside edit.
+    assert not any(kind == "notice" for kind, _ in messages(run()))
+
+
+def test_exp_create_with_no_values_and_one_value(project):
+    async def steps(app, pilot):
+        await typing("exp create", "Empty", "m", "")(app, pilot)
+        await typing("exp create", "One", "m", "m_crude 2.2110 g", "")(app, pilot)
+
+    shown = run(steps, size=(200, 50))
+    created = [text for kind, text in messages(shown) if kind == "success"]
+    assert created[0].endswith("·  0 values")
+    assert created[1].endswith("·  1 value")
+    saved = stored(project)
+    assert saved["E001"]["values"] == {}
+    assert list(saved["E002"]["values"]) == ["m_crude"]
+    assert shown.status.startswith("Invented project/E002 · ")
+
+
+def test_ctrl_c_during_exp_create_saves_nothing_and_uses_no_id(project):
+    async def steps(app, pilot):
+        await typing("exp create", "Cancelled", "m", "m_crude 2.2110 g")(app, pilot)
+        await type_in(pilot, "m", "_")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.walk is None
+        await typing("exp create", "Kept", "m", "")(app, pilot)
+
+    shown = run(steps, size=(200, 50))
+    assert ("cancel", "Cancelled. Nothing was saved.") in messages(shown)
+    assert list(stored(project)) == ["E001"]
+    assert stored(project)["E001"]["title"] == "Kept"
+    assert messages(shown)[-1][1].startswith('Created E001 "Kept"')
+
+
+def test_exp_open_by_id_or_title_shows_it_in_the_status_line(project):
+    invented_experiments()
+
+    async def steps(app, pilot):
+        await typing("exp open E002")(app, pilot)
+        assert app.experiment == "E002"
+        await typing('exp open "Recrystallisation trial 2"')(app, pilot)
+        assert app.experiment == "E001"
+        await typing("exp open Second try")(app, pilot)
+
+    shown = run(steps, size=(200, 50))
+    assert messages(shown) == [
+        ("echo", "exp open E002"),
+        ("success", 'Opened E002 "Second try".'),
+        ("echo", 'exp open "Recrystallisation trial 2"'),
+        ("success", 'Opened E001 "Recrystallisation trial 2".'),
+        ("echo", "exp open Second try"),
+        ("success", 'Opened E002 "Second try".'),
+    ]
+    assert shown.status.startswith("Invented project/E002 · ")
+    assert (project / ".last-experiment").read_text() == "E002\n"
+
+
+def test_exp_open_refusals(project):
+    shown = run(typing("exp open E001"))
+    assert messages(shown)[1:] == [("error", "There are no experiments yet.")]
+    invented_experiments()
+    experiments.create("Second try", [])
+    shown = run(
+        typing("exp open E009", "exp open zzzzzz", "exp open Second try", "exp open")
+    )
+    assert messages(shown)[1:] == [
+        ("error", "Unknown experiment 'E009'."),
+        ("hint", "Did you mean: E001, E002?"),
+        ("echo", "exp open zzzzzz"),
+        ("error", "Unknown experiment 'zzzzzz'."),
+        ("hint", "Experiments: E001, E002, E003."),
+        ("echo", "exp open Second try"),
+        (
+            "error",
+            'Several experiments are called "Second try": E002, E003. '
+            "Open one by its ID.",
+        ),
+        ("echo", "exp open"),
+        ("error", "Usage: exp open <ID or title>"),
+    ]
+    assert not shown.status.startswith("Invented project/")
+
+
+def test_the_last_opened_experiment_opens_again_at_start(project):
+    invented_experiments()
+    run(typing("exp open E002"))
+    again = run()
+    assert messages(again) == [("hint", 'Opened E002 "Second try" from last session')]
+    assert again.status.startswith("Invented project/E002 · ")
+
+
+def test_a_deleted_last_experiment_opens_nothing_and_says_nothing(project):
+    invented_experiments()
+    run(typing("exp open E002"))
+    (project / "experiments.toml").write_text("")
+    history.log("external_edit", "experiments.toml")
+    again = run()
+    assert messages(again) == []
+    assert again.status.startswith("Invented project · ")
+
+
+def test_no_experiment_opens_while_another_window_holds_the_project(
+    project, other_process
+):
+    invented_experiments()
+    (project / ".last-experiment").write_text("E001\n")
+    (project / ".synthase.lock").write_text(str(other_process))
+    shown = run()
+    assert [kind for kind, _ in messages(shown)] == ["error"]
+    assert "/E001" not in shown.status
+
+
+def test_tab_offers_the_experiment_ids_after_exp_show(project):
+    invented_experiments()
+
+    async def steps(app, pilot):
+        app.query_one("#command").value = "exp show "
+        await type_in(pilot, "tab")
+        assert [match.word for match in app.matches] == ["E001", "E002", "all"]
+
+    run(steps)

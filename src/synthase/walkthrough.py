@@ -35,6 +35,8 @@ class Question:
     check: Check | None = None
     current: Answer = None
     """In an edit, the stored value."""
+    intro: str = ""
+    """A line shown once, above the question."""
 
 
 @dataclass
