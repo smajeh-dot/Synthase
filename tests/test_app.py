@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from textual import constants
+from textual.color import Color
 from textual.content import Content
 
 from synthase import __version__, experiments, history, older_console
@@ -177,7 +178,7 @@ def test_a_data_folder_that_isnt_synthases_is_left_alone(home):
         ("echo", "project create"),
         ("error", FOREIGN),
     ]
-    assert shown.status == f"{home} · ✗ data\\ isn't a Synthase folder"
+    assert shown.status == f"{home} · ● data\\ isn't a Synthase folder"
     assert [p.name for p in (home / "data").iterdir()] == ["results.csv"]
 
 
@@ -189,7 +190,7 @@ def test_a_project_open_in_another_window(project, other_process):
         ("echo", "exp show"),
         ("error", IN_USE),
     ]
-    assert shown.status.endswith(" · ✗ open in another Synthase window")
+    assert shown.status.endswith(" · ● open in another Synthase window")
     assert shown.status.startswith("Invented project · ")
     # The other window's lock stays.
     assert (project / ".synthase.lock").read_text() == str(other_process)
@@ -205,7 +206,7 @@ def test_a_broken_data_file(project):
             "load it. Fix it in Notepad, then try again.",
         )
     ]
-    assert shown.status.endswith(" · ✗ data\\experiments.toml has a mistake")
+    assert shown.status.endswith(" · ● data\\experiments.toml has a mistake")
     assert not shown.status.startswith("Invented project")
     assert not (project / ".synthase.lock").exists()
 
@@ -695,6 +696,22 @@ def test_a_failing_check_asks_about_the_log(project):
     assert "ZeroDivisionError" in (project / "error.log").read_text()
 
 
+def test_success_and_error_start_with_a_green_or_red_circle(home):
+    async def steps(app, pilot):
+        app.say("success", "Done")
+        app.say("error", "Not done")
+        await pilot.pause()
+        drawn = screen(app)
+        assert "   ● Done" in drawn[2]
+        assert "   ● Not done" in drawn[3]
+        success, error = (m.query_one(".glyph") for m in app.query(Message)[-2:])
+        colours = app.get_css_variables()
+        assert success.styles.color == Color.parse(colours["success"])
+        assert error.styles.color == Color.parse(colours["error"])
+
+    run(steps)
+
+
 # The older console (#119, decision 0029)
 
 
@@ -711,7 +728,7 @@ def test_cp437_draws_ascii_and_keeps_the_real_symbols(home, monkeypatch):
         app.say("normal", "2.003 g ± 0.001")
         await type_in(pilot, "e", "x", "tab")
         drawn = screen(app)
-        assert "   + Done" in drawn[2]
+        assert "   o Done" in drawn[2]
         assert "   2.003 g +/- 0.001" in drawn[3]
         assert any("  |> exit   Leave Synthase (or press Ctrl+D)." in r for r in drawn)
         assert drawn[-4].endswith(" Tab next | Enter chooses | keep typing to narrow -")

@@ -12,7 +12,7 @@ Decision 0020 made Synthase a full-screen app inside the PowerShell window, styl
 - The output fills the window and scrolls, newest at the bottom, keeping the latest 1,000 messages. Under it is the bottom block, always 4 rows: a thin rule, the command bar (`> `), a thin rule, and the status line. No header or footer.
 - Below 100 columns the screen has the class `-narrow`: `help` drops to one column.
 - The status line leads with the context, then the folder: `Aspirin synthesis · C:\Users\you\Lab\aspirin`, and later `Aspirin synthesis/E002 · …`. A long folder is shortened only when it doesn't fit: the home folder becomes `~`, then middle folders become `…`.
-- Every message kind has its own glyph, so no meaning depends on colour alone: `>` echo, `✓` success, `✗` error, `i` notice (new), `›` hint, `‹` cancel. Replies indent 2 cells and wrapped lines hang at 4.
+- Every message kind has its own glyph, so no meaning depends on colour alone: `>` echo, `✓` success, `✗` error, `i` notice (new), `›` hint, `‹` cancel. Replies indent 2 cells and wrapped lines hang at 4. (Changed by decision 0034: success and error now both start with `●`, in green or red.)
 - An error with suggestions is two lines: `✗ Unknown command 'epx'.`, then `› Did you mean: exp, exit?`. The wording is the command table's, unchanged; only the line break and the styling are added. Several `Usage:` lines hang at 4 under the first.
 - `help` lists the commands under their five headings with a rule, the usage in a 52-cell column. Command words are in the accent colour, `<required>` parts plain, `[optional]` parts faint. It closes with `› For every form of one command, type help <command>, e.g. help exp.` `help <command>` shows `Usage:` and `Example:` in a 9-cell label column.
 

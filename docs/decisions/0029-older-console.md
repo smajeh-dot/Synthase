@@ -9,7 +9,7 @@ Spec Section 2 says output is UTF-8 and falls back to ASCII when the console can
 - On Windows, also in the old console window. Python writes UTF-8 to it, but its fonts show boxes for `✓` and the rounded corners. The symbols are kept in Windows Terminal (`WT_SESSION` is set) and VS Code (`TERM_PROGRAM` is set).
 
 **The map** (the design's, owner decision D2)
-- One cell for one cell, applied to every line as it is drawn, borders included: `✓ +`, `✗ x`, `› -`, `‹ <`, `▸ >`, `· |`, `─ -`, `━ =`, `╭ ╮ ╰ ╯ +`, `│ |`, `µ u`, `Å A`.
+- One cell for one cell, applied to every line as it is drawn, borders included: `✓ +`, `✗ x`, `› -`, `‹ <`, `▸ >`, `· |`, `─ -`, `━ =`, `╭ ╮ ╰ ╯ +`, `│ |`, `µ u`, `Å A`. (Changed by decision 0034: `✓ +` and `✗ x` became `● o`.)
 - Longer than the symbol, spelt out before the text is laid out, so columns don't shift: `°C degC`, `° deg`, `± +/-`, `… ...`, `↑ Up`, `↓ Down`. This covers every message, the top-rule hints, the status line and the error log. The status line's shortened folder uses `...`, and its length is counted with the three dots.
 - Only the drawing changes. Stored values, the error log file and what a message says keep the real symbol.
 

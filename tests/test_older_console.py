@@ -36,9 +36,9 @@ def test_16_colours_is_rich_standard_or_windows():
 
 
 def test_one_cell_symbols_are_drawn_as_one_cell():
-    line = [Segment("✓ Done · 5 µL "), Segment("╭─━│╯ › ‹ ▸ ✗ 1 Å")]
+    line = [Segment("● Done · 5 µL "), Segment("╭─━│╯ › ‹ ▸ ● 1 Å")]
     drawn = Ascii().apply(line, Color(0, 0, 0))
-    assert [s.text for s in drawn] == ["+ Done | 5 uL ", "+-=|+ - < > x 1 A"]
+    assert [s.text for s in drawn] == ["o Done | 5 uL ", "+-=|+ - < > o 1 A"]
     # The other code points for micro and angstrom.
     assert Ascii().apply([Segment("μÅ")], Color(0, 0, 0))[0].text == "uA"
 

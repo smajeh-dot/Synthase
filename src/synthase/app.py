@@ -75,8 +75,8 @@ MAX_MESSAGES = 1000
 GLYPHS = {
     "echo": ">",
     "normal": "",
-    "success": "✓",
-    "error": "✗",
+    "success": "●",
+    "error": "●",
     "notice": "i",
     "hint": "›",
     "cancel": "‹",
