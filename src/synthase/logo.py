@@ -32,6 +32,9 @@ THICKNESS_PX = 13
 WEAVE = 15
 CROSSINGS = 1
 TURN = 90
+# How far apart in colour the ring's inner and outer edges are, in degrees, so
+# neighbouring colours run side by side across the band.
+TWIST = 40
 # Windows shorter than this show no logo.
 MIN_ROWS = 24
 
@@ -169,7 +172,8 @@ def ring(window_rows: int) -> list[list[Cell]]:
                 continue
             angle = math.atan2(x, -y) * 180 / math.pi
             weave = WEAVE * math.sin(angle * CROSSINGS * math.pi / 180)
-            blocks[j][i] = lab_at(angle - TURN + weave)
+            twist = TWIST * ((r - inner) / thickness - 0.5)
+            blocks[j][i] = lab_at(angle - TURN + weave + twist)
 
     rows = []
     for cy in range(row_count):
