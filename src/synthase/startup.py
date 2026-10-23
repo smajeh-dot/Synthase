@@ -112,7 +112,7 @@ def status_line(
         if kind == "hint":
             tail = Content.styled(f"› {text}", "$muted")
         else:
-            tail = Content.assemble(("✗", "bold $error"), (f" {text}", "$error"))
+            tail = Content.assemble(("●", "bold $error"), (f" {text}", "$error"))
     fixed = sum(len(p) for p in parts) + len(tail) + len(SEPARATOR) * len(parts)
     if tail:
         fixed += len(SEPARATOR)

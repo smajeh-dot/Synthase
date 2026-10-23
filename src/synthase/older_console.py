@@ -19,8 +19,7 @@ from textual.filter import LineFilter
 # drawn, borders included. µ and Å each have two code points, written as
 # escapes so an editor can't merge them.
 CELLS = {
-    "✓": "+",
-    "✗": "x",
+    "●": "o",
     "›": "-",
     "‹": "<",
     "▸": ">",
