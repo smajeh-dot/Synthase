@@ -152,13 +152,13 @@ def test_outside_edits_are_noticed_once(project):
 
 
 def test_a_folder_with_no_project(home):
-    shown = run(typing("exp show", "project create"), size=(200, 50))
+    shown = run(typing("exp show", "project show"), size=(200, 50))
     assert messages(shown) == [
         ("hint", NO_PROJECT),
         ("echo", "exp show"),
         ("hint", NO_PROJECT),
-        ("echo", "project create"),
-        ("error", "project create isn't built yet."),
+        ("echo", "project show"),
+        ("hint", NO_PROJECT),
     ]
     assert shown.status == f"{home} · › {NO_PROJECT}"
     assert not (home / "data").exists()
@@ -167,10 +167,14 @@ def test_a_folder_with_no_project(home):
 def test_a_data_folder_that_isnt_synthases_is_left_alone(home):
     (home / "data").mkdir()
     (home / "data" / "results.csv").write_text("invented\n")
-    shown = run(typing("help exp", "exp show"), size=(200, 50))
+    shown = run(typing("help exp", "exp show", "project create"), size=(200, 50))
     assert messages(shown)[0] == ("error", FOREIGN)
     assert len(shown.of(HelpForms)) == 1
-    assert messages(shown)[-1] == ("error", FOREIGN)
+    assert messages(shown)[-3:] == [
+        ("error", FOREIGN),
+        ("echo", "project create"),
+        ("error", FOREIGN),
+    ]
     assert shown.status == f"{home} · ✗ data\\ isn't a Synthase folder"
     assert [p.name for p in (home / "data").iterdir()] == ["results.csv"]
 
@@ -820,3 +824,103 @@ def test_another_windows_project_history_is_left_alone(project, other_process):
 
     run(steps)
     assert not (project / ".history").exists()
+
+
+# Projects (#102, decision 0031)
+
+
+def test_project_create_makes_the_project_and_opens_it(home):
+    seen = {}
+
+    async def steps(app, pilot):
+        await typing("help", "project create")(app, pilot)
+        assert bar_title(app) == "━ Answering project create · Ctrl+C cancels "
+        assert str(app.query_one("#prompt").render()) == "Name: "
+        assert app.query_one("#command").placeholder == ""
+        await typing("", "  Invented project  ")(app, pilot)
+        assert not app.query_one("#bar").has_class("-answering")
+        seen["lock"] = (home / "data" / ".synthase.lock").read_text()
+        await typing("project show", "exp show all")(app, pilot)
+
+    shown = run(steps, size=(200, 50))
+    assert seen["lock"] == str(os.getpid())
+    assert messages(shown)[3:7] == [
+        ("error", "An answer is needed."),
+        ("normal", "Name: Invented project"),
+        (
+            "success",
+            f'Created project "Invented project" in the folder path: {home}',
+        ),
+        ("echo", "project show"),
+    ]
+    lines = messages(shown)[7][1].split("\n")
+    assert lines[0] == "Name         Invented project"
+    assert lines[1].startswith("Created      20")
+    assert lines[2:] == [
+        f"Folder       {home}",
+        "Experiments  0",
+        "Compounds    0",
+    ]
+    # The project is open: data commands no longer get the no-project hint.
+    assert messages(shown)[-1] == ("error", "exp show all isn't built yet.")
+    assert shown.status.startswith("Invented project · ")
+    # The lines typed before the project existed are kept too.
+    assert (home / "data" / ".history").read_text("utf-8") == (
+        "help\nproject create\nproject show\nexp show all\n"
+    )
+    # Opening it again notices no outside edits.
+    again = run()
+    assert messages(again) == []
+    assert again.status.startswith("Invented project · ")
+
+
+def test_ctrl_c_during_project_create_leaves_the_folder_empty(home):
+    async def steps(app, pilot):
+        await typing("project create")(app, pilot)
+        await type_in(pilot, "I", "n", "v")
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert app.walk is None
+
+    shown = run(steps, size=(200, 50))
+    assert messages(shown)[-1] == ("cancel", "Cancelled. Nothing was saved.")
+    assert list(home.iterdir()) == []
+    assert shown.status == f"{home} · › {NO_PROJECT}"
+
+
+def test_project_create_in_a_project_is_refused(project):
+    shown = run(typing("project create"))
+    assert messages(shown)[-1] == (
+        "error",
+        'This folder is already the Synthase project "Invented project". '
+        "To start another, run synthase in another folder.",
+    )
+
+
+def test_project_edit_renames_and_enter_keeps_the_name(project):
+    async def steps(app, pilot):
+        await typing("project edit")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering project edit · Enter keeps · - clears · Ctrl+C cancels "
+        )
+        assert app.query_one("#command").placeholder == "Invented project"
+        await typing("-", "Renamed project")(app, pilot)
+        await typing("project edit", "")(app, pilot)
+
+    shown = run(steps)
+    assert messages(shown) == [
+        ("echo", "project edit"),
+        ("error", "An answer is needed."),
+        ("normal", "Name: Renamed project"),
+        ("success", 'Renamed project "Invented project" to "Renamed project".'),
+        ("echo", "project edit"),
+        ("normal", "Name: Renamed project"),
+        ("hint", "Name kept. Nothing was saved."),
+    ]
+    assert shown.status.startswith("Renamed project · ")
+    assert 'name = "Renamed project"' in (project / "synthase.toml").read_text()
+    assert [e["action"] for e in history.entries()] == [
+        "create_project",
+        "edit_project",
+    ]
+    assert messages(run()) == []

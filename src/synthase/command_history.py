@@ -61,6 +61,13 @@ class CommandHistory:
             with path().open("a", encoding="utf-8", newline="\n") as file:
                 file.write(f"{line}\n")
 
+    def keep(self) -> None:
+        """Start saving to `data\\.history`, beginning with the lines run so far:
+        a project was just created (decision 0031)."""
+        with path().open("a", encoding="utf-8", newline="\n") as file:
+            file.writelines(f"{line}\n" for line in self.lines)
+        self.saved = True
+
     def older(self, draft: str) -> str | None:
         """The line one step back, or None if there is none.
 
