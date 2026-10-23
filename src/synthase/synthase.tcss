@@ -30,12 +30,14 @@ Screen {
 .msg > .glyph { width: 2; height: auto; }
 .msg > .body { width: 1fr; height: auto; }
 
-/* The start-up logo names its own colours (decision 0035). */
-#logo { width: auto; height: auto; margin: 1 0; }
-
-.msg.-welcome > .lead { width: auto; color: $echo; text-style: bold; }
-.msg.-welcome > .sep { width: auto; color: $faint; }
-.msg.-welcome > .body { color: $muted; }
+.msg.-welcome .lead { width: auto; color: $echo; text-style: bold; }
+.msg.-welcome .sep { width: auto; color: $faint; }
+.msg.-welcome .body { color: $muted; }
+/* The start-up logo names its own colours (decision 0035). The welcome's two
+   parts stack to its right. */
+.msg.-welcome.-logo { margin: 1 0; }
+.msg.-welcome #logo { width: auto; height: auto; }
+.msg.-welcome .info { width: 1fr; height: auto; padding-left: 3; }
 
 .msg.-echo { margin-top: 1; }
 .msg.-echo > .glyph { color: $accent; text-style: bold; }
@@ -61,7 +63,7 @@ Screen {
 HelpList { height: auto; }
 HelpList > .group { height: auto; margin-bottom: 1; }
 HelpList > .msg.-hint { padding-left: 0; }
-HelpLine { height: auto; padding-left: 2; }
+HelpLine { height: auto; padding-left: 3; }
 HelpLine > .usage { width: 52; height: auto; }
 HelpLine > .text { width: 1fr; height: auto; color: $foreground; }
 Screen.-narrow HelpLine { layout: vertical; }

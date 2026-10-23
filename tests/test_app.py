@@ -703,9 +703,8 @@ def test_success_and_error_start_with_a_green_or_red_circle(home):
         app.say("error", "Not done")
         await pilot.pause()
         drawn = screen(app)
-        welcome = next(y for y, row in enumerate(drawn) if row.startswith(" Synthase"))
-        assert "   ● Done" in drawn[welcome + 2]
-        assert "   ● Not done" in drawn[welcome + 3]
+        done = next(y for y, row in enumerate(drawn) if "   ● Done" in row)
+        assert "   ● Not done" in drawn[done + 1]
         success, error = (m.query_one(".glyph") for m in app.query(Message)[-2:])
         colours = app.get_css_variables()
         assert success.styles.color == Color.parse(colours["success"])
@@ -1172,41 +1171,51 @@ def cells(app, y):
 
 
 def logo_on_screen(size, table):
-    """Check the logo and its blank rows at `size` against the design's table."""
-    welcome = f"Synthase {__version__}  ·  type 'help' for commands"
+    """Check the logo, the welcome beside it and the blank rows against `table`."""
+    # The welcome's two parts, from the ring's top row, 3 cells to its right.
+    info = [f"Synthase {__version__}", "type 'help' for commands"]
 
     async def steps(app, pilot):
         width = size[0]
-        rows = [cells(app, y) for y in range(len(table) + 3)]
+        rows = [cells(app, y) for y in range(len(table) + 2)]
         blank = [(" ", "#0C0C0C")] * width
         assert [(c, bg) for c, _, bg in rows[0]] == blank
-        for row, expected in zip(rows[1:], table, strict=False):
+        for y, (row, expected) in enumerate(zip(rows[1:], table, strict=False)):
+            assert row[0][0] == " "
             drawn = row[1 : 1 + len(expected)]
             for (char, fg, bg), cell in zip(drawn, expected, strict=True):
                 if cell is None:
                     assert (char, bg) == (" ", "#0C0C0C")
                 else:
                     assert (char, fg, bg) == (cell[0], cell[1], cell[2] or "#0C0C0C")
-            rest = row[:1] + row[1 + len(expected) :]
-            assert all(char == " " for char, _, _ in rest)
+            rest = "".join(char for char, _, _ in row[1 + len(expected) :])
+            text = info[y] if y < len(info) else ""
+            assert rest == ("   " + text).ljust(width - 1 - len(expected))
         assert [(c, bg) for c, _, bg in rows[len(table) + 1]] == blank
-        line = "".join(char for char, _, _ in rows[len(table) + 2])
-        assert line == " " + welcome.ljust(width - 1)
 
     return run(steps, size=size)
 
 
 def app_logo(shown):
-    return [w for w in shown.output if w.id == "logo"]
+    return [w for w in shown.of(Welcome) if w.logo is not None]
 
 
 def test_the_logo_at_80_by_24_is_the_design(home):
     shown = logo_on_screen((80, 24), LOGO_24)
-    assert [w.id for w in shown.output[:1]] == ["logo"]
+    assert len(app_logo(shown)) == 1
 
 
 def test_the_logo_at_120_by_30_is_the_design(home):
     logo_on_screen((120, 30), LOGO_30)
+
+
+def test_the_first_message_follows_the_blank_row_below_the_logo(home):
+    async def steps(app, pilot):
+        drawn = screen(app)
+        assert drawn[6].strip() == ""
+        assert drawn[7].startswith(f"   › {NO_PROJECT}"[:40])
+
+    run(steps, size=(80, 24))
 
 
 def test_no_logo_in_a_window_under_24_rows(home):
