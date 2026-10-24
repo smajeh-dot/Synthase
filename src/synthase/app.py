@@ -24,6 +24,7 @@ from synthase import (
     experiments,
     history,
     lock,
+    logo,
     older_console,
     project,
     walkthrough,
@@ -103,16 +104,29 @@ class Message(HorizontalGroup):
 
 
 class Welcome(HorizontalGroup):
-    """The first line: ``Synthase 0.2.0  ·  type 'help' for commands``."""
+    """The first line: ``Synthase 0.2.0  ·  type 'help' for commands``.
 
-    def __init__(self) -> None:
-        super().__init__(classes="msg -welcome")
+    With the start-up logo, the ring comes first and the two parts stack to its
+    right, from its top row (decision 0035).
+    """
+
+    def __init__(self, logo: Content | None = None) -> None:
+        super().__init__(classes="msg -welcome" + (" -logo" if logo else ""))
         self.text = f"Synthase {__version__}  ·  {WELCOME}"
+        self.logo = logo
 
     def compose(self) -> ComposeResult:
-        yield Label(f"Synthase {__version__}", classes="lead", markup=False)
-        yield Label("  ·  ", classes="sep", markup=False)
-        yield Static(WELCOME, classes="body", markup=False)
+        lead = Label(f"Synthase {__version__}", classes="lead", markup=False)
+        body = Static(WELCOME, classes="body", markup=False)
+        if self.logo is None:
+            yield lead
+            yield Label("  ·  ", classes="sep", markup=False)
+            yield body
+            return
+        yield Static(self.logo, id="logo")
+        with Vertical(classes="info"):
+            yield lead
+            yield body
 
 
 class Heading(Widget):
@@ -323,7 +337,12 @@ class SynthaseApp(App):
         self.current = 0
 
     def compose(self) -> ComposeResult:
-        yield VerticalScroll(Welcome(), id="output")
+        # The logo is drawn once at start-up, never redrawn (decision 0035).
+        height = self.size.height
+        ring = None
+        if height >= logo.MIN_ROWS and not (self.ascii or self.sixteen):
+            ring = logo.content(logo.ring(height))
+        yield VerticalScroll(Welcome(ring), id="output")
         with Vertical(id="bottom"):
             yield Matches(id="matches")
             with Vertical(id="bar"):
