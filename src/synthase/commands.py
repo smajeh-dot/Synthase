@@ -46,6 +46,8 @@ class Command:
     help: str
     example: str
     args: tuple[Arg, ...] = ()
+    bare: bool = False
+    """May be typed with no parts at all; the app then asks for them."""
 
     @property
     def usage(self) -> str:
@@ -133,6 +135,7 @@ COMMANDS = (
         "Store a new value in the open experiment.",
         "value add m_crude 2.211 g +/- 0.001 # Balance B2",
         VALUE_LINE,
+        bare=True,
     ),
     Command(
         ("value", "edit"),
@@ -280,6 +283,8 @@ def parse(line: str) -> Call | None:
     command = max(matches, key=lambda c: len(c.words))
     # Everything after the command words, as typed.
     rest = re.sub(r"^\s*" + r"\s+".join(map(re.escape, command.words)), "", line)
+    if command.bare and not rest.strip():
+        return Call(command, {})
     args = _read_args(command, rest)
     if args is None:
         raise CommandError(_usage(_forms(*command.words[:2])))

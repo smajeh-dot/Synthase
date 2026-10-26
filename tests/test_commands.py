@@ -302,3 +302,10 @@ def compound_show_stub(call):
 def test_spec_section_3_examples(line, output):
     handlers = {("compound", "show"): compound_show_stub}
     assert dispatch(line, handlers) == output
+
+
+def test_value_add_may_be_typed_with_no_parts_and_nothing_else_may():
+    assert parse("value add").args == {}
+    assert parse("value add   ").args == {}
+    for line in ("value edit", "value delete", "value show", "value history"):
+        assert error(line).startswith("Usage: ")

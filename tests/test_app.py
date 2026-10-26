@@ -1153,6 +1153,219 @@ def test_tab_offers_the_experiment_ids_after_exp_show(project):
     run(steps)
 
 
+def test_value_commands_need_an_open_experiment(project):
+    invented_experiments()
+    lines = [
+        "value add m_crude 2.2110 g",
+        "value edit m_crude 2.215 g",
+        "value delete m_crude",
+        "value show m_crude",
+        "value history m_crude",
+    ]
+    shown = run(typing(*lines))
+    expected = []
+    for line in lines:
+        expected += [("echo", line), ("error", "No experiment is open.")]
+    assert messages(shown) == expected
+    assert stored(project)["E002"]["values"] == {}
+
+
+def test_the_value_commands_from_add_to_history(project):
+    invented_experiments()
+    shown = run(
+        typing(
+            "exp open E002",
+            "value add m_crude 2.2110 g +/- 0.001",
+            "value add m_crude 9 g",
+            "value add m_salicylic 2.003 g # Balance B2",
+            "value edit m_crude 2.215 g",
+            "value edit m_crud 2.215 g",
+            "value show m_crude",
+            "value show m_salicylic",
+            "value delete m_salicylic",
+            "value show m_salicylic",
+            "value history m_crude",
+            "value history m_salicylic",
+        ),
+        size=(200, 60),
+    )
+    got = messages(shown)[2:]
+    times = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d"
+    assert got[:2] == [
+        ("echo", "value add m_crude 2.2110 g +/- 0.001"),
+        ("success", "Added m_crude: 2.2110 g +/- 0.001"),
+    ]
+    assert got[2:6] == [
+        ("echo", "value add m_crude 9 g"),
+        ("error", "m_crude already exists in E002."),
+        ("hint", "Use 'value edit' to change it."),
+        ("echo", "value add m_salicylic 2.003 g # Balance B2"),
+    ]
+    assert got[6:9] == [
+        ("success", "Added m_salicylic: 2.003 g"),
+        ("echo", "value edit m_crude 2.215 g"),
+        ("success", "Updated m_crude: 2.2110 g -> 2.215 g (uncertainty removed)"),
+    ]
+    assert got[9:15] == [
+        ("echo", "value edit m_crud 2.215 g"),
+        ("error", "There is no value 'm_crud' in E002."),
+        ("hint", "Did you mean: m_crude, m_salicylic?"),
+        ("hint", "Use 'value add' to store a new one."),
+        ("echo", "value show m_crude"),
+        ("normal", "m_crude  2.215 g"),
+    ]
+    assert got[15:20] == [
+        ("echo", "value show m_salicylic"),
+        ("normal", "m_salicylic  2.003 g\nnote: Balance B2"),
+        ("echo", "value delete m_salicylic"),
+        ("success", "Deleted m_salicylic."),
+        ("echo", "value show m_salicylic"),
+    ]
+    assert got[20:23] == [
+        ("error", "There is no value 'm_salicylic' in E002."),
+        ("hint", "Values: m_crude."),
+        ("echo", "value history m_crude"),
+    ]
+    kind, text = got[23]
+    assert kind == "normal"
+    first, second = text.split("\n")
+    assert re.fullmatch(times + r"  added    m_crude  2\.2110 g \+/- 0\.001", first)
+    assert re.fullmatch(
+        times + r"  edited   m_crude  2\.2110 g \+/- 0\.001 -> 2\.215 g", second
+    )
+    assert got[24][0] == "echo"
+    assert got[25][1].endswith("  deleted  m_salicylic")
+    assert stored(project)["E002"]["values"] == {
+        "m_crude": {"value": "2.215", "unit": "g"}
+    }
+
+
+def test_the_same_name_in_two_experiments_stays_separate(project):
+    invented_experiments()
+    run(
+        typing(
+            "exp open E001",
+            "value add m_crude 1.0 g",
+            "exp open E002",
+            "value add m_crude 2.2110 g",
+            "value edit m_crude 2.215 g",
+        )
+    )
+    saved = stored(project)
+    assert saved["E001"]["values"]["m_crude"]["value"] == "1.0"
+    assert saved["E002"]["values"]["m_crude"]["value"] == "2.215"
+
+
+def test_value_entry_refusals_use_the_usual_wording(project):
+    invented_experiments()
+    shown = run(
+        typing(
+            "exp open E002",
+            "value add m_crude 2.11O g",
+            "value add m_crude 2.2110 gg",
+            "value add m_crude 2.2110",
+            "value edit m_crude",
+            "value add rxn_1 1 g",
+        ),
+        size=(200, 60),
+    )
+    assert messages(shown)[2:] == [
+        ("echo", "value add m_crude 2.11O g"),
+        ("error", "'2.11O' isn't a number. Did you mean: 2.110?"),
+        ("echo", "value add m_crude 2.2110 gg"),
+        ("error", "Unknown unit 'gg'."),
+        ("hint", "Did you mean: g, kg?"),
+        ("echo", "value add m_crude 2.2110"),
+        ("error", "Usage: value add <name> <value> <unit> [+/- unc] [# note]"),
+        ("echo", "value edit m_crude"),
+        ("error", "Usage: value edit <name> <value> <unit> [+/- unc] [# note]"),
+        ("echo", "value add rxn_1 1 g"),
+        ("error", "Names starting with rxn_ are kept for reaction records."),
+    ]
+    assert stored(project)["E002"]["values"] == {}
+
+
+def test_value_add_on_its_own_takes_one_entry_per_line(project):
+    invented_experiments()
+
+    async def steps(app, pilot):
+        await typing("exp open E002", "value add m_crude 2.2110 g")(app, pilot)
+        await typing("value add")(app, pilot)
+        assert bar_title(app) == (
+            "━ Answering value add · one per line · empty line ends · Ctrl+C cancels "
+        )
+        assert str(app.query_one("#prompt").render()) == "Values: "
+        await typing(
+            "",
+            "m_crude 3 g",
+            "m_salicylic 2.003 g +/- 0.001 # Balance B2",
+            "m_salicylic 1 g",
+            "c_HCl 0.100 mol/dm^3",
+            "",
+        )(app, pilot)
+        assert not app.query_one("#bar").has_class("-answering")
+
+    shown = run(steps, size=(200, 60))
+    assert messages(shown)[4:] == [
+        ("echo", "value add"),
+        ("normal", FORMAT_LINE),
+        ("error", "An answer is needed."),
+        ("error", "m_crude already exists in E002. Use 'value edit' to change it."),
+        ("normal", "Values: m_salicylic 2.003 g +/- 0.001 # Balance B2"),
+        ("error", "m_salicylic already exists in E002. Use 'value edit' to change it."),
+        ("normal", "        c_HCl 0.100 mol/dm^3"),
+        ("success", "Added m_salicylic: 2.003 g +/- 0.001"),
+        ("success", "Added c_HCl: 0.100 mol/dm^3"),
+    ]
+    assert list(stored(project)["E002"]["values"]) == [
+        "m_crude",
+        "m_salicylic",
+        "c_HCl",
+    ]
+    assert [e["action"] for e in history.entries()][-2:] == ["add", "add"]
+
+
+def test_ctrl_c_during_value_add_saves_nothing(project):
+    invented_experiments()
+
+    async def steps(app, pilot):
+        await typing("exp open E002", "value add", "m_crude 2.2110 g")(app, pilot)
+        await type_in(pilot, "ctrl+c")
+
+    shown = run(steps, size=(200, 60))
+    assert messages(shown)[-1] == ("cancel", "Cancelled. Nothing was saved.")
+    assert stored(project)["E002"]["values"] == {}
+
+
+def test_tab_offers_the_open_experiments_value_names(project):
+    invented_experiments()
+    experiments.create("Third", [])
+    from synthase import experiment_values
+    from synthase.values import Entry
+
+    experiment_values.add(
+        "E002", [Entry("m_crude", "1", "g"), Entry("c_HCl", "1", "M")]
+    )
+    experiment_values.add("E003", [Entry("t_end", "5", "min")])
+
+    async def offered(app, pilot, line):
+        app.query_one("#command").value = line
+        await type_in(pilot, "tab")
+        return [match.word for match in app.matches]
+
+    async def steps(app, pilot):
+        assert await offered(app, pilot, "value show ") == []
+        await typing("exp open E002")(app, pilot)
+        assert await offered(app, pilot, "value show ") == ["c_HCl", "m_crude"]
+        assert await offered(app, pilot, "value history m") == ["m_crude"]
+        assert await offered(app, pilot, "value add ") == []
+        assert await offered(app, pilot, "exp show ") == ["E001", "E002", "E003", "all"]
+        assert await offered(app, pilot, "exp show E003 ") == ["t_end"]
+        assert await offered(app, pilot, "exp show E002 ") == ["c_HCl", "m_crude"]
+
+    run(steps, size=(200, 60))
+
+
 # The start-up logo (#132, decision 0035)
 
 
