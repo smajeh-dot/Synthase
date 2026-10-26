@@ -21,6 +21,7 @@ from synthase import (
     __version__,
     command_history,
     error_log,
+    experiment_values,
     experiments,
     history,
     lock,
@@ -41,11 +42,12 @@ from synthase.commands import (
     help_forms,
     parse,
 )
+from synthase.experiment_values import ValuesError
 from synthase.experiments import ExperimentError
 from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
 from synthase.storage import FolderState, StorageError, folder_state, project_folder
 from synthase.theme import SYNTHASE, SYNTHASE_16
-from synthase.values import EntryError
+from synthase.values import Entry, EntryError, read_entry
 from synthase.walkthrough import Answer, Question, Step, Walk, Walkthrough
 
 WELCOME = "type 'help' for commands"
@@ -83,6 +85,14 @@ GLYPHS = {
     "cancel": "‹",
 }
 USAGES = {c.usage: c for c in COMMANDS}
+
+# The value commands that take the name of a value already stored.
+VALUE_NAME_COMMANDS = {
+    ("value", "edit"),
+    ("value", "delete"),
+    ("value", "show"),
+    ("value", "history"),
+}
 
 Handler = Callable[[Call], None]
 
@@ -321,9 +331,18 @@ class SynthaseApp(App):
             ("project", "edit"): self.project_edit,
             ("exp", "create"): self.exp_create,
             ("exp", "open"): self.exp_open,
+            ("value", "add"): self.value_add,
+            ("value", "edit"): self.value_edit,
+            ("value", "delete"): self.value_delete,
+            ("value", "show"): self.value_show,
+            ("value", "history"): self.value_history,
         }
         # What Tab offers for IDs and names, by Arg.name (#105 onwards).
-        self.sources: dict[str, Source] = {"id": self.experiment_ids}
+        self.sources: dict[str, Source] = {
+            "id": self.experiment_ids,
+            "name": self.value_names,
+            "value_name": self.value_names,
+        }
         # The ID of the open experiment, shown after the project's name.
         self.experiment: str | None = None
         self.failure: Failure | None = None
@@ -577,6 +596,181 @@ class SynthaseApp(App):
             return experiments.ids()
         except StorageError:
             return []
+
+    def value_names(self, words: tuple[str, ...]) -> list[str]:
+        """What Tab offers for a value name: the open experiment's, after the
+        commands that take an existing one, and after `exp show`'s ID (0036)."""
+        experiment = self.experiment
+        try:
+            if words[:2] == ("exp", "show"):
+                if len(words) > 2 and words[2] in experiments.ids():
+                    experiment = words[2]
+            elif words[:2] not in VALUE_NAME_COMMANDS:
+                return []
+            if experiment is None:
+                return []
+            return experiment_values.names(experiment)
+        except StorageError:
+            return []
+
+    def open_values(self) -> str | None:
+        """The open experiment, or None after saying that none is open."""
+        if self.experiment is None:
+            self.say("error", experiment_values.NO_EXPERIMENT)
+        return self.experiment
+
+    def refuse_value(self, error: ValuesError) -> None:
+        """What is wrong, then each suggestion on a › line."""
+        first, *rest = error.lines
+        self.say("error", first)
+        for line in rest:
+            names = line.startswith(("Did you mean: ", "Values: "))
+            self.say("hint", names_content(line) if names else line)
+
+    def value_add(self, call: Call) -> None:
+        experiment = self.open_values()
+        if experiment is None:
+            return
+        if not call.args:
+            self.ask_values(experiment)
+            return
+        try:
+            entry = read_entry(call.args)
+            experiment_values.add(experiment, [entry])
+        except EntryError as error:
+            self.show_error(str(error))
+            return
+        except ValuesError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.say_added(entry)
+
+    def say_added(self, entry: Entry) -> None:
+        shown = experiment_values.text(entry, note=False)
+        self.say(
+            "success", experiment_values.ADDED.format(name=entry.name, entry=shown)
+        )
+
+    def ask_values(self, experiment: str) -> None:
+        """`value add` on its own: one entry per line until an empty line."""
+        try:
+            names = set(experiment_values.names(experiment))
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+
+        def check_line(text: str) -> str | None:
+            try:
+                entry = experiments.read_line(text)
+            except EntryError as error:
+                return str(error)
+            if entry.name in names:
+                return " ".join(
+                    (
+                        experiment_values.exists_message(entry.name, experiment),
+                        experiment_values.USE_EDIT,
+                    )
+                )
+            names.add(entry.name)
+            return None
+
+        def finish(answers: dict[str, Answer]) -> None:
+            entries = [experiments.read_line(line) for line in answers["values"] or []]
+            try:
+                experiment_values.add(experiment, entries)
+            except ValuesError as error:
+                self.refuse_value(error)
+                return
+            except StorageError as error:
+                self.say("error", str(error))
+                return
+            for entry in entries:
+                self.say_added(entry)
+
+        questions = [
+            Question(
+                "values",
+                "Values",
+                lines=True,
+                check=check_line,
+                intro=experiments.FORMAT,
+            )
+        ]
+        self.ask(Walkthrough("value add", questions, finish))
+
+    def value_edit(self, call: Call) -> None:
+        experiment = self.open_values()
+        if experiment is None:
+            return
+        try:
+            entry = read_entry(call.args)
+            old = experiment_values.edit(experiment, entry)
+        except EntryError as error:
+            self.show_error(str(error))
+            return
+        except ValuesError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        text = experiment_values.UPDATED.format(
+            name=entry.name,
+            old=experiment_values.brief(old),
+            new=experiment_values.brief(entry),
+            removed=experiment_values.removed(old, entry),
+        )
+        self.say("success", text)
+
+    def value_delete(self, call: Call) -> None:
+        experiment = self.open_values()
+        if experiment is None:
+            return
+        name = call.args["name"]
+        try:
+            experiment_values.delete(experiment, name)
+        except ValuesError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.say("success", experiment_values.DELETED.format(name=name))
+
+    def value_show(self, call: Call) -> None:
+        experiment = self.open_values()
+        if experiment is None:
+            return
+        name = call.args["name"]
+        try:
+            entry = experiment_values.read(experiment, name)
+        except ValuesError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        lines = [Content(f"{name}  {experiment_values.text(entry, note=False)}")]
+        if entry.note is not None:
+            lines.append(Content(f"note: {entry.note}"))
+        self.say("normal", Content("\n").join(lines))
+
+    def value_history(self, call: Call) -> None:
+        experiment = self.open_values()
+        if experiment is None:
+            return
+        try:
+            lines = experiment_values.versions(experiment, call.args["name"])
+        except ValuesError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        self.say("normal", Content("\n").join(Content(line) for line in lines))
 
     def reopen_last(self) -> None:
         """Open the experiment last opened in this folder, and say which (0033)."""

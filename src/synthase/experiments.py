@@ -105,7 +105,7 @@ def find(text: str) -> str:
     raise ExperimentError(UNKNOWN.format(text=text) + rest)
 
 
-def _inline(**parts: str) -> InlineTable:
+def inline(**parts: str) -> InlineTable:
     """`{ value = "2.003", unit = "g" }`, each part written as text."""
     fields = ", ".join(
         f"{k} = {tomlkit.string(v).as_string()}" for k, v in parts.items()
@@ -139,7 +139,7 @@ def create(new_title: str, entries: list[Entry]) -> tuple[str, str]:
     table["x_unit"] = X_UNIT
     values = tomlkit.table()
     for entry in entries:
-        values[entry.name] = _inline(**stored(entry))
+        values[entry.name] = inline(**stored(entry))
     table["values"] = values
     doc[new_id] = table
     save_toml(path, doc)
