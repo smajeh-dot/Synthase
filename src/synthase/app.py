@@ -20,6 +20,7 @@ from textual.widgets import Input, Label, Static
 from synthase import (
     __version__,
     command_history,
+    compounds,
     error_log,
     experiment_values,
     experiments,
@@ -42,6 +43,7 @@ from synthase.commands import (
     help_forms,
     parse,
 )
+from synthase.compounds import CompoundError
 from synthase.experiment_values import ValuesError
 from synthase.experiments import ExperimentError
 from synthase.startup import ELLIPSIS, Startup, open_folder, status_line
@@ -336,10 +338,14 @@ class SynthaseApp(App):
             ("value", "delete"): self.value_delete,
             ("value", "show"): self.value_show,
             ("value", "history"): self.value_history,
+            ("compound", "create"): self.compound_create,
+            ("compound", "edit"): self.compound_edit,
+            ("compound", "show", "all"): self.compound_show_all,
         }
         # What Tab offers for IDs and names, by Arg.name (#105 onwards).
         self.sources: dict[str, Source] = {
-            "id": self.experiment_ids,
+            "id": self.data_ids,
+            "field": self.compound_fields,
             "name": self.value_names,
             "value_name": self.value_names,
         }
@@ -588,14 +594,102 @@ class SynthaseApp(App):
         self.draw_status()
         self.say("success", project.RENAMED.format(old=old, new=new))
 
-    def experiment_ids(self, words: tuple[str, ...]) -> list[str]:
-        """What Tab offers for an ID: the experiments, after `exp`."""
-        if words[:1] != ("exp",):
-            return []
+    def data_ids(self, words: tuple[str, ...]) -> list[str]:
+        """What Tab offers for an ID: the experiments after `exp`, the compounds
+        after `compound`."""
         try:
-            return experiments.ids()
+            if words[:1] == ("exp",):
+                return experiments.ids()
+            if words[:1] == ("compound",):
+                return compounds.ids()
         except StorageError:
-            return []
+            pass
+        return []
+
+    def compound_fields(self, words: tuple[str, ...]) -> list[str]:
+        """What Tab offers for a field after `compound show <ID>`."""
+        return list(compounds.FIELDS) if words[:2] == ("compound", "show") else []
+
+    def compound_create(self, call: Call) -> None:
+        self.ask(
+            Walkthrough("compound create", self.compound_questions(), self.add_compound)
+        )
+
+    def compound_questions(self, old: compounds.Fields | None = None) -> list[Question]:
+        """The six questions, each showing its stored value in an edit."""
+        questions = []
+        for name in compounds.FIELDS:
+            unit = name in compounds.UNIT_FIELDS
+            questions.append(
+                Question(
+                    name,
+                    compounds.LABELS[name],
+                    optional=True,
+                    check=compounds.check_unit_field if unit else None,
+                    current=compounds.shown(old[name]) if old and name in old else None,
+                    intro=compounds.UNIT_FORMAT if name == "molar_mass" else "",
+                )
+            )
+        return questions
+
+    def add_compound(self, answers: dict[str, Answer]) -> None:
+        try:
+            fields = compounds.build(answers)
+            new_id = compounds.create(fields)
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        name = compounds.label_of(fields)
+        template = compounds.ADDED if name else compounds.ADDED_BARE
+        self.say("success", template.format(id=new_id, name=name))
+
+    def compound_edit(self, call: Call) -> None:
+        try:
+            compound_id = compounds.find(call.args["id"])
+            old = compounds.get(compound_id)
+        except CompoundError as error:
+            self.refuse_value(error)
+            return
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+
+        def finish(answers: dict[str, Answer]) -> None:
+            try:
+                fields = compounds.build(answers, old)
+                changed = compounds.edit(compound_id, fields)
+            except StorageError as error:
+                self.say("error", str(error))
+                return
+            if not changed:
+                self.say("hint", compounds.UNCHANGED)
+                return
+            name = compounds.label_of(fields)
+            template = compounds.UPDATED if name else compounds.UPDATED_BARE
+            self.say("success", template.format(id=compound_id, name=name))
+
+        walk = Walkthrough(
+            "compound edit", self.compound_questions(old), finish, edit=True
+        )
+        self.ask(walk)
+
+    def compound_show_all(self, call: Call) -> None:
+        """One line each: the ID bright, then the name and the formula."""
+        try:
+            rows = compounds.listing()
+        except StorageError as error:
+            self.say("error", str(error))
+            return
+        if not rows:
+            self.say("hint", compounds.NONE_YET)
+            return
+        width = max(len(name) for _, name, _ in rows)
+        lines = [
+            Content.styled(compound_id, "$echo")
+            + Content(f"  {name.ljust(width)}  {formula}".rstrip())
+            for compound_id, name, formula in rows
+        ]
+        self.say("normal", Content("\n").join(lines))
 
     def value_names(self, words: tuple[str, ...]) -> list[str]:
         """What Tab offers for a value name: the open experiment's, after the
@@ -619,12 +713,12 @@ class SynthaseApp(App):
             self.say("error", experiment_values.NO_EXPERIMENT)
         return self.experiment
 
-    def refuse_value(self, error: ValuesError) -> None:
+    def refuse_value(self, error: ValuesError | CompoundError) -> None:
         """What is wrong, then each suggestion on a › line."""
         first, *rest = error.lines
         self.say("error", first)
         for line in rest:
-            names = line.startswith(("Did you mean: ", "Values: "))
+            names = line.startswith(("Did you mean: ", "Values: ", "Compounds: "))
             self.say("hint", names_content(line) if names else line)
 
     def value_add(self, call: Call) -> None:
